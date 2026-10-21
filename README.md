@@ -36,7 +36,8 @@ Requirements: Node 24 with pnpm, Go, Git and PostgreSQL. Windows, Linux and macO
 
 ```sh
 pnpm install
-cp .env.example .env      # PowerShell: Copy-Item .env.example .env   (then fill in your PostgreSQL user and password)
+cp .env.example .env      # PowerShell: Copy-Item .env.example .env   cmd.exe: copy .env.example .env
+                          # then fill in your PostgreSQL user and password
 pnpm db:migrate
 pnpm dev                  # open http://localhost:5173
 ```

@@ -29,7 +29,14 @@ const failures = [];
 
 // 1. `pnpm install` configured this checkout.
 if (existsSync(join(root, '.git'))) {
-  const hooksPath = git(root, ['config', '--get', 'core.hooksPath']).trim();
+  // `git config --get` exits 1 when the key is unset; treat that as an empty value.
+  const result = spawnSync('git', ['config', '--get', 'core.hooksPath'], {
+    cwd: root,
+    env,
+    encoding: 'utf8',
+  });
+  if (result.error) throw result.error;
+  const hooksPath = result.status === 0 ? result.stdout.trim() : '';
   if (hooksPath !== '.githooks') {
     failures.push(`core.hooksPath is "${hooksPath}", expected ".githooks" (run pnpm install)`);
   }
