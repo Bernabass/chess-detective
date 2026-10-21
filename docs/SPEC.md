@@ -1,0 +1,871 @@
+# Retrograde: Product and Technical Specification
+
+Version 1.0 · 2026-10-21 · Status: approved for implementation
+
+This document is the source of truth for v1. `CLAUDE.md` says how to work; this file says what to build. If something here is ambiguous or wrong, raise it, decide, and log the decision in `docs/DECISIONS.md`. Don't silently diverge.
+
+## Contents
+
+1. Product overview
+2. Glossary and conventions
+3. Architecture
+4. Engine core
+5. Retro analysis
+6. Proof-game solver
+7. Puzzle generator
+8. Daily Proof Game
+9. Lab
+10. Backend: API and data model
+11. Quality: security, testing, CI, accessibility, deployment
+12. Phases and acceptance criteria
+13. Out of scope for v1
+14. References
+
+---
+
+## 1. Product overview
+
+### 1.1 Pitch
+
+Ordinary chess puzzles ask "what's the best move?". Retrograde asks "**what happened?**". Players look at a position and reason backwards like a detective: which move was played last, whether a position could ever arise, and how a game reached a given position in exactly N moves.
+
+### 1.2 v1 scope
+
+- **Lab.** A board editor where anyone can set up or paste a position. The engine explains whether the position is legal, lists the possible last moves, writes "detective notes" (deductions such as "at least one white bishop is a promoted pawn") and can try to prove legality by finding a game that reaches the position.
+- **Daily Proof Game.** One puzzle per day for everyone. The player sees a target position and must find the game from the starting position that reaches it in exactly N plies. Six guesses, Wordle-style per-ply feedback, three optional hints, a share card, streaks.
+- **Accounts and leaderboards.** Username/password and "Sign in with Lichess". Guests can play without an account, and their results move to their account when they sign up. There are daily and all-time leaderboards and public profiles.
+- **Archive.** Past daily puzzles are playable in practice mode, which doesn't affect streaks or leaderboards.
+
+### 1.3 Non-goals for v1
+
+Story campaign ("Case Files"), puzzle composer mode, real-time multiplayer, fairy chess, partial retrograde analysis conventions, native mobile apps, translations. See §13.
+
+### 1.4 Key user journeys
+
+1. A guest opens `/daily`, plays a 9-ply guess on the board, gets feedback, uses one hint, solves it on guess 3 and copies the share card.
+2. A chess fan pastes a strange FEN into the Lab and learns it's illegal because "White's pawns needed at least 2 captures, but no black pieces are missing".
+3. A returning user signs in with Lichess, sees their 12-day streak, and checks where they rank on today's leaderboard.
+
+---
+
+## 2. Glossary and conventions
+
+| Term | Meaning |
+|---|---|
+| **Ply** | One move by one side. All internal counts use plies. |
+| **Move count notation** | Problemists write "proof game in 4.5": 4 full moves plus one White move = 9 plies. `plies = round(moves × 2)`, so 4.0 → 8 and 4.5 → 9. The UI shows both forms ("4.5 moves · 9 plies"). |
+| **Proof game (PG)** | A legal game from the initial position that ends in a given position after a given number of plies, proving the position can arise. |
+| **Shortest proof game (SPG)** | A proof game where no shorter proof game exists. |
+| **Unique / dual** | A puzzle is *unique* if exactly one move sequence of the stated length reaches the target. Extra solutions are *duals*. Daily puzzles must be unique SPGs. |
+| **Retraction (un-move)** | Taking back a move: given position P, find positions P′ and moves m such that playing m in P′ gives P. |
+| **Un-capture** | A retraction that puts back a piece that was captured. |
+| **Un-promotion** | A retraction that turns a piece on the last rank back into a pawn. |
+| **Retractor** | The side that is *not* to move in P, i.e. the side that made the last move. |
+| **Target key** | The FEN piece-placement field plus side to move, e.g. `rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w`. Daily targets are compared by target key only. |
+| **Verdict** | Lab result: `illegal` (proved by a rule), `legal` (proved by a proof game), or `undecided` (nothing proved within limits). |
+
+Conventions:
+- Squares are `a1`..`h8`. Moves on the wire and in storage are UCI: `e2e4`, `e7e8q`, castling as king move `e1g1`.
+- White always moves first, so after N plies the side to move is White if N is even and Black if N is odd.
+- "Day" means a UTC calendar day. Puzzle #1 is the UTC date in `LAUNCH_DATE`.
+
+---
+
+## 3. Architecture
+
+### 3.1 Overview
+
+```
+ Browser
+ ┌──────────────────────────────────────┐
+ │ React app (apps/web)                 │
+ │  ├─ chessground board                │
+ │  └─ Web Worker ── engine (TS)        │  Lab: analysis, retractions, solver
+ └───────────────┬──────────────────────┘
+                 │ JSON over HTTPS (/api/*), session cookie
+ ┌───────────────▼──────────────────────┐      ┌────────────┐
+ │ Go API (services/api)                │─────▶│ PostgreSQL │
+ │  ├─ auth, sessions, guests           │      └────────────┘
+ │  ├─ daily: guesses, feedback, hints  │─────▶ lichess.org (OAuth only)
+ │  ├─ leaderboards, stats              │
+ │  └─ serves the built web app         │
+ └───────────────▲──────────────────────┘
+                 │ JSONL import (CLI subcommand)
+ ┌───────────────┴──────────────────────┐
+ │ Generator (apps/generator)           │  Node CLI using the TS engine
+ └──────────────────────────────────────┘
+```
+
+### 3.2 Key decisions
+
+| Decision | Why |
+|---|---|
+| Chess and retro engine in **TypeScript** | It must run in the browser (Lab) and in Node (generator). One implementation means one source of truth for the hard algorithms. |
+| Backend in **Go** + **PostgreSQL** | Accounts, sessions, leaderboards and keeping the daily solution secret need a server. Go and Postgres are strong resume skills and a good fit. |
+| Server validates guesses with a **Go chess library** | The solution must stay server-side, so the server needs move legality. A mature Go library is safer than porting our engine. Cross-language fixtures (§11.2) keep the two rule implementations in agreement. |
+| **Contract-first API** (`api/openapi.yaml`) | Go server stubs and TS client types are generated from one file, so they can't drift apart. |
+| **Single deployable** | The Go binary embeds the built web app and serves it. One container plus Postgres. |
+| Puzzles generated **offline** | Proving uniqueness is expensive. It runs ahead of time in the generator, never at request time. |
+
+### 3.3 Repository layout
+
+```
+retrograde/
+├─ CLAUDE.md
+├─ .claude/rules/                 path-scoped rules (engine, api, web)
+├─ api/openapi.yaml               API contract
+├─ apps/
+│  ├─ web/                        React + Vite + TS
+│  │  ├─ src/{routes,components,features/{daily,lab,auth,leaderboard,profile},lib,worker}
+│  │  └─ e2e/                     Playwright
+│  └─ generator/                  Node CLI
+├─ packages/engine/               TS chess + retro engine
+│  ├─ src/{core,retro,solver,util}/
+│  └─ test/
+├─ services/api/                  Go module
+│  ├─ cmd/retrograde/main.go      subcommands: serve, migrate, import-puzzles, schedule
+│  ├─ internal/{config,httpapi,auth,daily,leaderboard,chessrules,store,webui,clock}
+│  └─ db/{migrations,queries}/
+├─ fixtures/                      cross-language test vectors (generated)
+├─ scripts/                       cross-platform Node helpers for package.json scripts
+├─ docs/{SPEC.md,PROGRESS.md,DECISIONS.md,learning/}
+├─ .githooks/commit-msg           strips AI attribution from commit messages
+├─ .gitattributes                 LF line endings everywhere
+├─ package.json                   root task scripts (no Makefile)
+├─ docker-compose.yml             Postgres for development
+├─ Dockerfile                     production image
+└─ .github/workflows/ci.yml
+```
+
+### 3.4 Technology choices
+
+Pin each tool to its latest stable version in Phase 0 and record the versions in `DECISIONS.md`.
+
+| Area | Choice |
+|---|---|
+| Monorepo | pnpm workspaces; packages `@retrograde/engine`, `@retrograde/web`, `@retrograde/generator` |
+| Task runner | Root `package.json` scripts plus Node helpers in `scripts/`; `concurrently` and `rimraf` for cross-platform behaviour. No Makefile. |
+| Node | Current LTS, pinned in `.nvmrc` and `package.json#engines` |
+| TS tooling | TypeScript strict, ESLint (typescript-eslint), Prettier, Vitest, fast-check |
+| Web | React, Vite, React Router, TanStack Query, Tailwind CSS, chessground, Comlink (worker RPC), openapi-typescript + openapi-fetch |
+| Go | Latest stable Go; `net/http` with method-pattern routing; oapi-codegen (strict server, std-http); pgx v5; sqlc; goose; `golang.org/x/crypto/argon2`; a maintained Go chess library such as `github.com/corentings/chess` (check its current major version and license) |
+| Database | PostgreSQL (latest stable) with the `citext` extension |
+| E2E | Playwright |
+| CI | GitHub Actions |
+| License | GPL-3.0-or-later for the whole repo (chessground is GPL-3.0). All dependencies must be GPL-compatible. |
+
+### 3.5 Development environment
+
+- **Primary:** Windows 10, VS Code with the Claude Code extension, PowerShell or Git Bash. **Also supported:** Linux and macOS (CI runs on Ubuntu).
+- Required tools: Git for Windows, the current Node LTS with pnpm, Go, and the owner's **local PostgreSQL** (databases `retrograde` and `retrograde_test`, credentials in `.env`). Docker (`pnpm db:up`) is an optional alternative.
+- Root scripts: `dev`, `check`, `test:api`, `test:e2e`, `gen`, `db:migrate`, `seed`, `build`, `start` (run the production build locally), plus optional `db:up`/`db:down`. Each must work from cmd.exe, PowerShell and bash (see `CLAUDE.md`).
+- `pnpm install` runs a `prepare` script that sets `git config core.hooksPath .githooks`, so the commit-msg hook is always active.
+- The project lives in the folder the owner opened in VS Code. Its path may contain spaces, so every script quotes paths. If the folder is inside OneDrive, mention once that sync can slow `node_modules`, then carry on.
+
+---
+
+## 4. Engine core (`packages/engine`)
+
+Correctness first, proved by perft. Then speed.
+
+### 4.1 Representation
+
+- 0x88 board in `Int8Array(128)`; piece codes `1..6` = P N B R Q K for White, negated for Black, `0` empty.
+- `Position` fields: board, side to move, castling rights (4 bits KQkq), en passant square (or none), halfmove clock, fullmove number, king squares, piece counts per type and color, Zobrist key (`hi`, `lo` as 32-bit unsigned ints).
+- Move encoding: a 32-bit int with from (7 bits), to (7 bits), promotion piece (3 bits) and flags (capture, double push, en passant, castle, promotion), plus captured piece stored on the undo stack.
+- `makeMove` / `unmakeMove` with an undo stack. They update the Zobrist key incrementally.
+
+### 4.2 FEN
+
+- `parseFen(fen)` returns `Result<Position, FenError[]>`. It checks **syntax only**: 6 fields (or 4, defaulting the clocks), 8 ranks of 8 squares, valid piece letters, side `w|b`, castling `-` or a subset of `KQkq` in order, en passant `-` or a square on rank 3/6, non-negative clocks.
+- Syntactically valid but illegal positions (2 white kings, pawn on rank 1) must parse successfully. The Lab needs them; legality is §5's job.
+- `toFen(position)` round-trips any parsed FEN in canonical form.
+- `targetKey(position)` returns placement + side to move.
+
+### 4.3 Move generation
+
+- Pseudo-legal generation, then a legality filter (make move, test own king attacked, unmake).
+- Must handle every special case: castling (not out of, through or into check; path empty; right present), en passant including the horizontal-pin case (e.g. king and enemy rook on the same rank as both pawns), promotions to Q/R/B/N, double pushes, pins.
+- `isSquareAttacked(position, square, byColor)` and `checkers(position)` are exported; the analyzer needs them.
+
+### 4.4 Notation
+
+- UCI: `moveToUci`, `uciToMove(position, uci)` (returns an error for illegal or malformed moves).
+- SAN: `moveToSan` with correct disambiguation and `+`/`#` suffixes; `sanToMove` is lenient (accepts missing check marks, `0-0`, lowercase promotion).
+- `replay(ucis: string[])` from the initial position returns the final position or `{ illegalAt: index }`.
+
+### 4.5 Zobrist hashing
+
+Keys from a fixed-seed PRNG (e.g. a small xorshift or splitmix32 implementation in `util/rng.ts`), so hashes are identical on every machine and run. Two 32-bit halves; no BigInt.
+
+### 4.6 Public API (sketch; refine in the Phase 1 plan)
+
+```ts
+export type Color = 'w' | 'b';
+export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
+
+export function initialPosition(): Position;
+export function parseFen(fen: string): Result<Position, FenError[]>;
+export function toFen(p: Position): string;
+export function targetKey(p: Position): string;
+export function legalMoves(p: Position): Move[];
+export function makeMove(p: Position, m: Move): void;
+export function unmakeMove(p: Position): void;
+export function moveToUci(m: Move): string;
+export function uciToMove(p: Position, uci: string): Result<Move, string>;
+export function moveToSan(p: Position, m: Move): string;
+export function sanToMove(p: Position, san: string): Result<Move, string>;
+export function replay(ucis: readonly string[]): Result<Position, { illegalAt: number; reason: string }>;
+export function perft(p: Position, depth: number): number;
+export function createRng(seed: number): Rng;
+```
+
+### 4.7 Tests
+
+Perft (node counts). Check these against chessprogramming.org "Perft Results" before relying on them.
+
+| Position | FEN | d1 | d2 | d3 | d4 | d5 |
+|---|---|---|---|---|---|---|
+| Start | `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1` | 20 | 400 | 8902 | 197281 | 4865609 |
+| Kiwipete | `r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1` | 48 | 2039 | 97862 | 4085603 | 193690690 |
+| Pos 3 | `8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1` | 14 | 191 | 2812 | 43238 | 674624 |
+| Pos 4 | `r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1` | 6 | 264 | 9467 | 422333 | 15833292 |
+| Pos 5 | `rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8` | 44 | 1486 | 62379 | 2103487 | 89941194 |
+
+- Fast suite: all positions to the depth where count ≤ ~500,000. Slow suite: depth 5 for all, plus start position depth 6 (119060324).
+- Property tests: FEN round-trip; `makeMove`+`unmakeMove` restores board and Zobrist key exactly; incremental Zobrist equals Zobrist recomputed from scratch; for every legal move in random positions, `sanToMove(moveToSan(m)) === m` and the same for UCI.
+- Report perft nodes per second in `PROGRESS.md`. Aim for several million per second in Node.
+
+---
+
+## 5. Retro analysis (`packages/engine/src/retro`)
+
+### 5.1 Verdict model
+
+```ts
+type Severity = 'illegal' | 'deduction';
+interface Finding {
+  rule: RuleId;
+  severity: Severity;
+  message: string;          // plain English, shown in the Lab
+  squares: string[];        // squares to highlight
+  arrows?: [string, string][];
+}
+type Verdict =
+  | { kind: 'illegal'; findings: Finding[] }                 // at least one 'illegal' finding
+  | { kind: 'legal'; proof: string[]; findings: Finding[] }  // UCI proof game found (§6)
+  | { kind: 'undecided'; findings: Finding[]; reason: 'no-contradiction-found' | 'search-limit' };
+
+export function analyzePosition(p: Position, opts?: AnalyzeOptions): AnalysisReport;
+```
+
+Soundness rule: `illegal` only when the contradiction is certain. Never claim `legal` without a proof game. `deduction` findings are true facts about the position's history; they become the Lab's "detective notes".
+
+### 5.2 Static rules
+
+Each rule has a `RuleId`, a test that triggers it and a test that it stays silent on legal positions. Message templates are examples; keep them that clear.
+
+| RuleId | Severity | Check | Example message |
+|---|---|---|---|
+| `KING_COUNT` | illegal | Exactly one king per side | "White has 2 kings. Each side has exactly one king." |
+| `PAWN_ON_BACK_RANK` | illegal | No pawn on rank 1 or 8 | "The white pawn on h1 is impossible: pawns never stand on the first or last rank." |
+| `TOO_MANY_PIECES` | illegal | ≤ 16 pieces per side | "Black has 17 pieces but started with 16." |
+| `TOO_MANY_PAWNS` | illegal | ≤ 8 pawns per side | |
+| `PROMOTION_EXCESS` | illegal | `pawns + minPromotions ≤ 8`, where `minPromotions = max(0,Q−1) + max(0,R−2) + max(0,N−2) + max(0,lightB−1) + max(0,darkB−1)` | "White has 3 queens, so at least 2 were promoted. With 7 pawns still on the board that's 9 pawns, but White only had 8." |
+| `OPPONENT_IN_CHECK` | illegal | The side *not* to move is not in check | "It's White to move, but the black king on e8 is in check from the rook on e7. Black's last move would have left its own king in check." |
+| `TOO_MANY_CHECKERS` | illegal | The side to move has at most 2 checkers | "The black king is in check from 3 pieces at once; one move can create at most a double check." |
+| `PAWN_CAPTURES_EXCEED_MISSING` | illegal | Min captures made by a side's pawns ≤ opponent's missing pieces (§5.2.1) | "White's pawns needed at least 1 capture to get where they are (the doubled c-pawns), but all 16 black pieces are still on the board." |
+| `CASTLING_RIGHTS_INCONSISTENT` | illegal | Every claimed castling right has king and rook on their original squares | "The FEN says White can castle kingside, but the white king is on f1." |
+| `EN_PASSANT_INCONSISTENT` | illegal | En passant square set ⇒ the matching pawn just double-pushed: pawn on rank 4/5 behind the square, ep square and the pawn's start square empty, side to move matches | |
+| `NO_POSSIBLE_LAST_MOVE` | illegal | Not the initial position, and no viable retraction at depth 1 (§5.4) | "There's no move Black could have just played to reach this position." |
+| `PROMOTED_PIECE_REQUIRED` | deduction | Same formula as `PROMOTION_EXCESS` > 0 | "At least one white bishop is a promoted pawn: White has two dark-squared bishops." |
+| `CAPTURES_REQUIRED` | deduction | Lower bound of captures by each side's pawns > 0 | "White's pawns made at least 2 captures." |
+| `CASTLING_LOST` | deduction | King or rook not on its original square | "White can no longer castle kingside: the h1 rook has moved." |
+| `LAST_MOVE_FORCED` | deduction | Exactly one viable retraction at the requested depth | "Black's last move must have been …Kh8-g8." |
+
+#### 5.2.1 Pawn capture accounting (the matching rule)
+
+Every pawn starts on its own file. Each file change needs one capture. For one color:
+- Let the current pawns be p₁..pₖ (k ≤ 8) and the starting files be a..h.
+- Cost of assigning pawn pᵢ on file f to starting file s is `|f − s|`. It's infinite if the pawn couldn't have reached its rank from rank 2 (rank 7 for Black) with that many file changes: the file distance must be ≤ the rank distance travelled.
+- Min-cost assignment of pawns to distinct starting files (Hungarian algorithm; matrix is at most 8×8) gives the minimum number of captures by those pawns.
+- If that minimum exceeds the opponent's missing pieces (16 − opponent piece count), the position is illegal.
+
+This ignores promoted pawns and pieces captured by non-pawns. That's a relaxation, so the bound stays valid. A tighter version is a stretch goal (§5.6).
+
+### 5.3 Retraction generator
+
+`retractions(p: Position): Retraction[]`, where a `Retraction` holds the prior position, the forward move (UCI) and its kind: `normal | uncapture | unpromotion | unpromotion-uncapture | un-en-passant | uncastle`.
+
+The retractor is the side not to move in P. For each retractor piece:
+
+- **Normal un-move.** Move the piece backwards along its movement pattern to an empty square. Sliders retract through empty squares only. Pawns retract one square back, or two squares if standing on their 4th rank (white rank 4, black rank 5) with the square between empty. No pawn may retract onto its own first rank.
+- **Un-capture.** Same geometry (pawns: diagonally backwards), then place an opponent piece of type P, N, B, R or Q on the vacated square. No pawn on rank 1/8; the opponent's material must still pass `TOO_MANY_PIECES`, `TOO_MANY_PAWNS` and `PROMOTION_EXCESS`.
+- **Un-promotion.** A retractor Q/R/B/N on its last rank becomes a pawn one rank back: same file (non-capture) or adjacent file (with un-capture).
+- **Un-en-passant.** A retractor pawn on its 6th rank on file f retracts diagonally to its 5th rank. An opponent pawn reappears on file f, 5th rank (from the retractor's view), and the square on file f two ranks ahead of that must be empty. The prior position gets the en passant square set.
+- **Un-castling.** King on g1 with rook on f1, and e1/h1 empty (queenside: king c1, rook d1, a1/b1/e1 empty), mirrored for Black. The prior position restores the castling right. The king must not have been in check in the prior position, and neither may the square it passed.
+
+Validity of each candidate prior position P′:
+1. In P′ it's the retractor's turn, so the opponent's king must not be in check in P′.
+2. If P has an en passant square, the only valid retraction is the matching double push.
+3. **Confirm by forward generation.** Generate legal moves in P′ and check that one of them produces P (compare placement, side to move and en passant square). This guarantees soundness by construction.
+
+Castling rights simplification: a normal retraction copies P's castling rights into P′. P′ might have had more rights, but the extra rights can't be known and don't affect other retractions. Log this in `DECISIONS.md`.
+
+### 5.4 Last-move analysis
+
+`lastMoves(p, { depth, timeLimitMs, nodeLimit, shouldStop })`:
+- A retraction is **viable at depth 1** if P′ passes every static rule.
+- It's **viable at depth k** if P′ is the initial position, or P′ has a retraction viable at depth k−1.
+- Output: every depth-1 retraction with its viability at the requested depth, described in words ("White's last move could have been Bf1xb5, capturing a black knight").
+- No viable retraction at any depth ⇒ illegal (sound, since retractions are complete and static rules are sound). Exactly one ⇒ `LAST_MOVE_FORCED`.
+- Halfmove clocks, repetition and the 50/75-move rules are ignored.
+
+### 5.5 Tests
+
+- **Completeness (property).** For random positions P from seeded random play: for every legal move m from P to Q, `retractions(Q)` contains a retraction that gives back P (placement + side + ep).
+- **Soundness (property).** For every retraction of Q to P′, some legal move in P′ produces Q. This holds by construction (§5.3 step 3), but test it anyway.
+- Run 2,000 positions in the fast suite and 50,000 in the slow suite.
+- **Curated fixtures** in `packages/engine/test/fixtures/positions.json`: at least 30 positions, each with the expected verdict, rule ids and a one-line comment explaining why. Include at least these:
+
+| FEN | Expected |
+|---|---|
+| `k7/8/8/8/8/8/8/K6P w - - 0 1` | illegal: `PAWN_ON_BACK_RANK` |
+| `4k3/4R3/8/8/8/8/8/4K3 w - - 0 1` | illegal: `OPPONENT_IN_CHECK` |
+| `4k3/8/3N4/1B6/8/8/8/4R2K b - - 0 1` | illegal: `TOO_MANY_CHECKERS` (rook e1, knight d6, bishop b5) |
+| `4k3/8/8/8/8/8/PPPPPPPP/QQ2K3 w - - 0 1` | illegal: `PROMOTION_EXCESS` |
+| `rnbqkbnr/pppppppp/8/8/8/2P5/P1PPPPPP/RNBQKBNR b KQkq - 0 1` | illegal: `PAWN_CAPTURES_EXCEED_MISSING` (b-pawn reached c3 by capturing, but Black is missing nothing) |
+| `4k3/8/8/8/8/8/8/5K1R w K - 0 1` | illegal: `CASTLING_RIGHTS_INCONSISTENT` |
+| `4k3/8/8/8/8/8/8/4K3 w - e6 0 1` | illegal: `EN_PASSANT_INCONSISTENT` |
+| `rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2` | legal, proof `e2e4 e7e5` |
+| `8/8/8/8/8/8/8/K6k w - - 0 1` | undecided (needs a long proof game) |
+| `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1` | undecided in v1. It's actually illegal by a knight-parity argument (only knights can move and return, and a knight returning home always uses an even number of moves, so White can't have made one more move than Black). Proving it is stretch rule `PARITY` (§5.6). Use this example in `docs/learning`. |
+
+Claude Code should construct the remaining fixtures and verify each one by reasoning in its comment, plus by the solver where possible.
+
+### 5.6 Stretch rules (only after Phase 3 is done, and only if time allows)
+
+`PARITY` (tempo/parity arguments as above), caged pieces (a bishop that can't have left its home square behind unmoved pawns), and capture accounting that includes promoted pawns and the colors of captured bishops.
+
+---
+
+## 6. Proof-game solver (`packages/engine/src/solver`)
+
+### 6.1 Problem
+
+Given a target key T and a ply count N, find (or count) all move sequences of exactly N plies from the initial position whose final position matches T.
+
+```ts
+interface SolveOptions {
+  plies: number;
+  mode: 'find-one' | 'find-all' | 'count';
+  cap?: number;                  // stop counting/collecting once this many are found
+  timeLimitMs?: number;
+  nodeLimit?: number;
+  shouldStop?: () => boolean;
+  onProgress?: (p: { nodes: number; elapsedMs: number }) => void;
+}
+interface SolveResult {
+  status: 'complete' | 'limit' | 'aborted';
+  solutions: string[][];         // UCI sequences (find modes)
+  count: number;                 // exact if status === 'complete' and count < cap
+  nodes: number;
+  elapsedMs: number;
+}
+export function solveProofGame(target: string, opts: SolveOptions): SolveResult;
+export function shortestProofGame(target: string, maxPlies: number, opts?: Omit<SolveOptions, 'plies' | 'mode'>): ShortestResult;
+```
+
+`shortestProofGame` tries N = the smallest value with the right parity (target side to move fixes N's parity) that is ≥ the lower bound from the start position, then N + 2, and so on up to `maxPlies`.
+
+### 6.2 Per-side move budgets
+
+After k plies, r = N − k plies remain. If White is to move, White has `ceil(r/2)` moves left and Black `floor(r/2)`; if Black is to move, swap them. Prune a node whenever **either** side's lower bound exceeds its own budget. Separating the budgets is much stronger than one combined bound.
+
+### 6.3 Lower bound h(P, T), computed per side
+
+For side S, h_S is the maximum of:
+1. **Displacement cost.** For each piece type, a min-cost matching between S's current pieces and S's target pieces of that type. Use empty-board distances, which never overestimate:
+   - King: Chebyshev distance.
+   - Knight: precomputed BFS table.
+   - Bishop: 0 same square, 1 same diagonal, 2 same square color, ∞ otherwise.
+   - Rook / Queen: 0, 1 or 2.
+   - Pawn (White), with `dr` = ranks to advance and `df` = files to change: ∞ if `dr < 0` or `|df| > dr`. Otherwise every move advances exactly one rank except a double push, which needs two straight ranks at the start. So the cost is `dr − 1` if the pawn is on rank 2 and `dr − |df| ≥ 2`, else `dr`. (A tempting shortcut that only allows the double push when `df == 0` overestimates, e.g. e2→f5 via e4 and exf5 is 2 moves, not 3.) Mirror for Black.
+   - Extra current pieces (to be captured) cost S nothing. Target pieces with no match of their type (promotions) cost 0.
+2. **Captures S must make**: (opponent pieces now) − (opponent pieces in target). Each capture is a separate move of S.
+
+Feasibility pruning (return "impossible"):
+- Target piece count of S > current piece count of S (pieces never come back).
+- Target pawns of S can't be perfectly matched to current pawns of S.
+- Unmatched target non-pawn pieces of S > current pawns of S − target pawns of S (not enough pawns left to promote).
+
+**The castling trap.** Castling moves king and rook in one move. Naive distances make the bound overestimate, which silently breaks the search. While S still has a castling right:
+- King cost = min(normal distance, 1 + distance from the castled king square to the target).
+- Rook on its original corner with that right = min(normal distance, distance from its castled square to the target), counting the rook's part as free.
+
+The castling move then counts once (through the king), so the bound stays admissible.
+
+**Admissibility property test (mandatory).** Play a seeded random game of N plies to get T. For every prefix position Pᵢ, h_White(Pᵢ, T) ≤ White's remaining moves and h_Black(Pᵢ, T) ≤ Black's remaining moves. Run it over thousands of random games, including games with castling, promotions and en passant. Any change to h must keep it green.
+
+### 6.4 Search
+
+- Depth-first search with the exact remaining ply count; prune with §6.2/§6.3; when r = 0, compare target keys.
+- In find modes, order moves by decreasing bound improvement.
+- **Memoized counting.** A transposition table keyed by (Zobrist key including castling and en passant, remaining plies) stores the solution count from that node, saturated at `cap`. This turns repeated subtrees into a lookup and makes uniqueness checks (`cap = 2`) cheap. Use a fixed-size table with an always-replace or depth-preferred scheme; store the full key to rule out collisions. In find modes the same table records dead ends (count 0) so they're never searched twice. Never store a result for a subtree that was cut short by a limit or abort.
+- Progress callback about every 50,000 nodes; check `shouldStop`, `timeLimitMs` and `nodeLimit` at the same interval.
+
+### 6.5 Tests
+
+- Admissibility property test (above).
+- **Brute-force cross-check.** Enumerate every game of exactly N plies from the start position, group by target key and count sequences. For N ≤ 4 (fast suite, 197,281 games at N = 4) compare against `solveProofGame(…, mode: 'count')` for a sample of at least 500 targets. N = 5 in the slow suite.
+- Every random N-ply game's target must be solvable at N plies (status `complete`, count ≥ 1).
+- `bench` script: solve 50 targets from random games at N = 6, 8, 10 and print median/p95 time and nodes. Record the results in `PROGRESS.md`. If the median at N = 8 is above about 5 seconds in Node, profile and improve before moving on.
+
+---
+
+## 7. Puzzle generator (`apps/generator`)
+
+### 7.1 CLI
+
+```
+generator generate --count 400 --seed 42 --min-plies 5 --max-plies 12 --jobs 4 --out puzzles.jsonl
+generator verify puzzles.jsonl
+generator stats puzzles.jsonl
+```
+
+`--jobs` uses `worker_threads`. Each candidate index gets a seed derived from `--seed`, and output is sorted by candidate index, so results are deterministic for a given seed, jobs value and engine version.
+
+### 7.2 Pipeline per candidate
+
+1. Sample a random legal game of N plies (N drawn from the allowed range) with **biased move selection** to make interesting puzzles: captures ×3, promotions ×5 (underpromotions ×8), castling ×3, en passant ×6, a piece returning to a square it visited ×2, other moves ×1. Tune these weights and record the final ones in `DECISIONS.md`.
+2. Target = `targetKey` of the final position.
+3. **Shortest:** `count` at N − 2, N − 4, … down to the lower bound must all be 0.
+4. **Unique:** `count` at N with `cap = 2` must be exactly 1 with status `complete`.
+5. Detect features and compute difficulty (§7.3); emit a record.
+
+Candidates that hit a limit are discarded, never emitted. `stats` reports acceptance rate and time per candidate by N.
+
+### 7.3 Features and difficulty
+
+Features detected from the solution: `capture`, `promotion`, `underpromotion`, `castling`, `en-passant`, `switchback` (a piece returns to a square it left), `tempo` (a piece wastes moves with a back-and-forth), `king-walk` (king moves ≥ 2 times), `phoenix` (a captured piece type is recreated by promotion).
+
+Difficulty, a starting formula to tune with real data:
+`score = plies + 1.5·(captures) + 3·promotions + 4·underpromotions + 2·castling + 3·enPassant + 2·switchbacks + 2·tempo + log2(solverNodesFindOne) / 4`
+
+The score maps to 1–5 stars by quantiles of the generated pool. Rough intended ply ranges: ★ 5–6, ★★ 7–8, ★★★ 8–9, ★★★★ 10–11, ★★★★★ 12 or special features.
+
+### 7.4 Output (one JSON object per line)
+
+```json
+{"id":"g42-000137","plies":2,"target":"rnbqkb1r/pppppppp/5n2/8/8/5N2/PPPPPPPP/RNBQKB1R w","solution":["g1f3","g8f6"],"features":[],"difficulty":1,"score":2.0,"solverNodes":41,"engineVersion":"0.4.0","seed":42}
+```
+
+(A valid but deliberately tiny example: 1.Nf3 Nf6 is the only 2-ply game reaching that position. Real puzzles use 5–12+ plies, and the numeric fields here are made up.)
+
+### 7.5 Content policy
+
+Only generated puzzles. Don't copy composed problems from books, magazines or databases.
+
+---
+
+## 8. Daily Proof Game
+
+### 8.1 Rules
+
+- Today's puzzle shows the target position, its difficulty, and its length ("Reach this position in 4.5 moves · 9 plies").
+- A guess is a complete legal game from the initial position of exactly N plies.
+- Six guesses. A guess whose final target key equals the target solves the puzzle. Because puzzles are unique, this means the player found the solution; accept any game that reaches the target anyway.
+- After six wrong guesses, the attempt fails and the solution is revealed.
+
+### 8.2 Input
+
+- The player plays moves on the board starting from the initial position. Chessground only allows legal moves (destinations from `legalMoves`). Promotions open a picker.
+- Visible: move list in SAN, ply counter (`5 / 9`), Undo, Reset, and a small target board.
+- A "difference overlay" toggle highlights squares where the current board differs from the target. It's computed client-side from the public target, so it leaks nothing.
+- Submit is enabled only at exactly N plies.
+- Previous guesses appear as rows of feedback cells. Tapping a row replays that guess on the board.
+
+### 8.3 Feedback algorithm (computed by the server)
+
+Per ply i, compare the guess move gᵢ to the solution move sᵢ (UCI strings):
+1. **Green (`G`, 🟩, ✓ icon):** gᵢ == sᵢ. Mark solution ply i as used.
+2. **Yellow (`Y`, 🟨, ↔ icon):** otherwise, if gᵢ equals an unused solution move sⱼ, j ≠ i, **at a ply of the same color** (j ≡ i mod 2). Process plies left to right and mark the leftmost such j as used.
+3. **Gray (`X`, ⬛, ✕ icon):** otherwise.
+
+Greens are assigned in a first pass before any yellows, as in Wordle. The feedback string has length N, e.g. `YGYGGX`.
+
+Test vectors (put these in `fixtures/feedback-vectors.json` and test them in Go):
+
+| Solution | Guess | Feedback |
+|---|---|---|
+| `e2e4 e7e5 g1f3 g8f6 f3g1 f6g8` | `g1f3 e7e5 e2e4 g8f6 f3g1 b8c6` | `YGYGGX` |
+| `g1f3 g8f6 f3g1 f6g8 g1f3 b8c6` | `g1f3 b8c6 f3g1 c6b8 g1f3 g8f6` | `GYGXGY` |
+| `g1f3 g8f6 f3g1 f6g8 g1f3 b8c6` | `g1f3 g8f6 f3g1 f6g8 g1f3 g8f6` | `GGGGGX` |
+
+Add at least 10 more, including a guess identical to the solution (`G…G`) and one with no matching moves (`X…X`).
+
+### 8.4 Hints (each is recorded and costs ranking)
+
+1. **Movers:** which piece types moved at least once, per color ("White: knight, pawn · Black: knight").
+2. **Captures:** the plies where captures happen, or "no captures".
+3. **One move:** reveals the solution move at the earliest ply that isn't green in any guess so far.
+
+Hints are served by the server, in order, one per request.
+
+### 8.5 Results, ranking and stats
+
+- Daily leaderboard ordering: solved first, then fewer guesses, then fewer hints, then shorter solve time (`finished_at − started_at`, where `started_at` is when the server first sent today's puzzle to that player).
+- Streak: consecutive UTC days with a solved daily (archive play doesn't count). Track current and max streak.
+- Profile stats: played, solved, win %, current/max streak, guess distribution (1–6 and failed), average hints.
+
+### 8.6 Share card (copied to clipboard)
+
+```
+Retrograde #142 ★★★ · 4.5 moves
+3/6 · 🔍1
+🟨🟩⬛🟩⬛⬛🟩🟩🟨
+🟩🟩🟨🟩🟩⬛🟩🟩🟩
+🟩🟩🟩🟩🟩🟩🟩🟩🟩
+https://<BASE_URL>/daily
+```
+
+A failed attempt shows `X/6`. With no hints, omit the `🔍n` part.
+
+### 8.7 Scheduling and archive
+
+- Weekly difficulty ramp: Mon ★, Tue ★★, Wed ★★, Thu ★★★, Fri ★★★, Sat ★★★★, Sun ★★★★★.
+- `retrograde schedule --from YYYY-MM-DD --days 365` deterministically assigns unscheduled puzzles by weekday difficulty and fails loudly if the pool runs out of a level.
+- Puzzles from earlier days are playable in archive mode: same UI, attempts flagged `archive`, excluded from leaderboards and streaks. The solution is still revealed only after finishing.
+
+### 8.8 Guests
+
+The first request without a session creates a guest player and an anonymous session cookie. Guests play the daily and appear on no leaderboard. When a guest registers or signs in, their attempts move to the account for any puzzle the account hasn't played yet (§10.6).
+
+---
+
+## 9. Lab
+
+### 9.1 Layout
+
+Board editor (drag pieces from a palette and off the board; chessground supports dropping new pieces), FEN input with inline syntax errors, side-to-move toggle, castling and en passant fields, "Start position" and "Clear" buttons. On a phone the report sits below the board; on wide screens beside it.
+
+### 9.2 Report
+
+- **Verdict banner:** Illegal / Legal (proved) / Undecided, with a one-sentence reason.
+- **Detective notes:** all findings in plain English. Hovering or tapping a note highlights its squares and arrows on the board.
+- **Possible last moves:** depth-1 retractions with viability at depth 3 by default (adjustable 1–6), each with a "Take it back" button that loads the prior position.
+- **Prove it:** runs `shortestProofGame` up to 16 plies with a progress indicator and Cancel. A found proof plays back step by step with a scrubber.
+
+Analysis runs automatically (debounced ~300 ms) after edits; Prove runs only on request.
+
+### 9.3 Permalinks and examples
+
+The URL holds the position (`/lab?fen=…`, URL-encoded), so any analysis can be shared. An example gallery shows 8–10 fixture positions with teaser titles ("Who moved last?", "Count the captures", "The impossible start").
+
+### 9.4 Worker protocol
+
+The engine worker is exposed with Comlink: `analyze(fen)`, `lastMoves(fen, depth)`, `prove(target, maxPlies)` (with progress via a Comlink proxy callback). Cancel = `worker.terminate()`, then create a fresh worker. The UI shows "Cancelled" rather than an error.
+
+---
+
+## 10. Backend: API and data model (`services/api`)
+
+### 10.1 Layout
+
+- `cmd/retrograde`: one binary with subcommands `serve`, `migrate`, `import-puzzles <file.jsonl>`, `schedule --from --days`.
+- `internal/config`: env parsing and validation (fail fast on startup).
+- `internal/httpapi`: generated server interface implementation, middleware (request ID, logging, recover, security headers, rate limits, CSRF/origin check), problem+json errors.
+- `internal/auth`: passwords, sessions, guests, merge, Lichess OAuth.
+- `internal/daily`: puzzle of the day, attempts, guesses, feedback, hints, streaks. Pure functions where possible.
+- `internal/leaderboard`, `internal/chessrules` (adapter around the Go chess library: `Replay(ucis) (targetKey, error)`), `internal/store` (sqlc + transaction helper), `internal/clock`, `internal/webui` (embedded `dist/`, SPA fallback to `index.html`).
+
+### 10.2 Configuration (environment)
+
+| Variable | Example | Notes |
+|---|---|---|
+| `DATABASE_URL` | `postgres://postgres:<password>@localhost:5432/retrograde?sslmode=disable` | Development database |
+| `TEST_DATABASE_URL` | `postgres://postgres:<password>@localhost:5432/retrograde_test?sslmode=disable` | Used only by integration tests |
+| `PORT` | `8080` | |
+| `BASE_URL` | `http://localhost:5173` in dev | Used for redirects, origin checks, share links |
+| `LAUNCH_DATE` | `2026-11-01` | Puzzle #1 date (UTC) |
+| `COOKIE_SECURE` | `true` in production | |
+| `LICHESS_BASE_URL` | `https://lichess.org` | Overridable for tests |
+| `LICHESS_CLIENT_ID` | `retrograde` | Lichess PKCE needs no registration; any stable id works (verify in Lichess docs) |
+| `LOG_LEVEL` | `info` | |
+
+### 10.3 Data model (sketch; finalize in Phase 6)
+
+```sql
+CREATE EXTENSION IF NOT EXISTS citext;
+
+CREATE TABLE users (
+  id               bigserial PRIMARY KEY,
+  username         citext UNIQUE NOT NULL,          -- 3–20 chars [A-Za-z0-9_-]
+  password_hash    text,                             -- argon2id PHC string; null for Lichess-only users
+  lichess_user_id  text UNIQUE,
+  created_at       timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE players (                               -- every visitor is a player; guests have user_id NULL
+  id          bigserial PRIMARY KEY,
+  user_id     bigint UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE sessions (
+  token_hash    bytea PRIMARY KEY,                   -- sha256 of the random token; the token itself is only in the cookie
+  player_id     bigint NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  last_seen_at  timestamptz NOT NULL DEFAULT now(),
+  expires_at    timestamptz NOT NULL
+);
+
+CREATE TABLE puzzles (
+  id              bigserial PRIMARY KEY,
+  external_id     text UNIQUE NOT NULL,              -- generator id, makes import idempotent
+  plies           int  NOT NULL CHECK (plies BETWEEN 1 AND 40),
+  target          text NOT NULL,                     -- target key
+  solution        text[] NOT NULL,                   -- UCI; NEVER returned before the attempt finishes
+  difficulty      smallint NOT NULL CHECK (difficulty BETWEEN 1 AND 5),
+  features        text[] NOT NULL DEFAULT '{}',
+  solver_nodes    bigint NOT NULL,
+  engine_version  text NOT NULL,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE daily_schedule (
+  day        date PRIMARY KEY,
+  number     int UNIQUE NOT NULL,
+  puzzle_id  bigint UNIQUE NOT NULL REFERENCES puzzles(id)
+);
+
+CREATE TYPE attempt_status AS ENUM ('in_progress', 'solved', 'failed');
+
+CREATE TABLE attempts (
+  id           bigserial PRIMARY KEY,
+  player_id    bigint NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  puzzle_id    bigint NOT NULL REFERENCES puzzles(id),
+  is_archive   boolean NOT NULL,
+  status       attempt_status NOT NULL DEFAULT 'in_progress',
+  hints_used   smallint NOT NULL DEFAULT 0 CHECK (hints_used BETWEEN 0 AND 3),
+  started_at   timestamptz NOT NULL,
+  finished_at  timestamptz,
+  UNIQUE (player_id, puzzle_id)
+);
+
+CREATE TABLE guesses (
+  attempt_id  bigint NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
+  idx         smallint NOT NULL CHECK (idx BETWEEN 0 AND 5),
+  moves       text[] NOT NULL,
+  feedback    text NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (attempt_id, idx)
+);
+
+CREATE TABLE player_stats (
+  player_id       bigint PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
+  played          int NOT NULL DEFAULT 0,
+  solved          int NOT NULL DEFAULT 0,
+  current_streak  int NOT NULL DEFAULT 0,
+  max_streak      int NOT NULL DEFAULT 0,
+  last_solved_day date,
+  guess_dist      int[] NOT NULL DEFAULT '{0,0,0,0,0,0,0}'   -- 1..6 guesses, index 7 = failed
+);
+
+CREATE TABLE oauth_states (
+  state_hash     bytea PRIMARY KEY,
+  code_verifier  text NOT NULL,
+  player_id      bigint REFERENCES players(id) ON DELETE CASCADE,   -- guest to merge
+  return_to      text NOT NULL,
+  expires_at     timestamptz NOT NULL
+);
+```
+
+Add indexes needed by the leaderboard and expiry queries; check them with `EXPLAIN`.
+
+### 10.4 Endpoints
+
+All paths are under `/api`. JSON in and out; errors use `application/problem+json`.
+
+| Method & path | Auth | Purpose |
+|---|---|---|
+| `GET /health` | none | Liveness + DB ping |
+| `GET /auth/me` | session | Current player: `{ guest: bool, username?, stats }` |
+| `POST /auth/register` | session (guest ok) | `{username, password}` → creates user, merges guest, rotates session |
+| `POST /auth/login` | session (guest ok) | Same merge and rotation |
+| `POST /auth/logout` | session | Deletes the session |
+| `GET /auth/lichess/start?return_to=` | none | 302 to Lichess authorize URL (§10.6) |
+| `GET /auth/lichess/callback` | none | Completes OAuth, 302 to `return_to` |
+| `GET /daily` | creates guest session if missing | Today's puzzle: `{number, day, plies, target, difficulty, attempt: {status, guesses[{moves, feedback}], hintsUsed, hints[]}, solution?}` (`solution` only when finished) |
+| `GET /daily/{number}` | session | Same shape for an archive puzzle (number ≤ today's) |
+| `POST /daily/{number}/guesses` | session | `{moves: string[]}` → `{feedback, status, solution?}` |
+| `POST /daily/{number}/hints` | session | Next hint → `{hintIndex, hint}` |
+| `GET /leaderboards/daily/{number}?limit=100` | none | Top entries + the caller's own rank if signed in |
+| `GET /leaderboards/all-time?metric=current_streak\|max_streak\|solved` | none | Top 100 |
+| `GET /users/{username}` | none | Public profile and stats |
+| `GET /archive?page=` | none | Past puzzles: number, day, difficulty, plies (and the caller's result if any) |
+
+### 10.5 Guess submission (one transaction)
+
+1. Resolve the puzzle by number; reject future numbers (404) and anything over 40 plies.
+2. Get or create the attempt (`is_archive = number < today's number`); `SELECT … FOR UPDATE` the attempt row.
+3. Reject if the attempt is finished (409) or already has 6 guesses (409).
+4. Validate input: exactly `plies` moves, each matching `^[a-h][1-8][a-h][1-8][qrbn]?$`. Replay through `chessrules`; an illegal move gives 422 with the ply index.
+5. Compute feedback (§8.3). Solved if the replayed target key equals the target.
+6. Insert the guess. If solved, or failed on guess 6, set the status and `finished_at`, then update `player_stats` (skip streaks and leaderboards for archive attempts).
+7. Return feedback and status, plus the solution only if the attempt just finished.
+
+### 10.6 Authentication
+
+- **Passwords:** argon2id, at least OWASP's minimum parameters (m = 19 MiB, t = 2, p = 1; stronger is fine), stored as a PHC string with its parameters. Password length 8–128.
+- **Sessions:** 32 random bytes, base64url in the cookie `rg_session` (HttpOnly, SameSite=Lax, Secure when `COOKIE_SECURE`, Path=/), sha256 stored in the DB. 30-day sliding expiry. Rotate the token on login, register and logout.
+- **CSRF:** SameSite=Lax cookies, and every state-changing request must have `Content-Type: application/json` and an `Origin` header equal to `BASE_URL` (reject otherwise). The OAuth callback is protected by `state`.
+- **Guest merge:** in one transaction, for each guest attempt whose puzzle the user hasn't played, re-point it to the user's player; delete the rest and the guest player; recompute that user's `player_stats` from attempts.
+- **Sign in with Lichess (OAuth 2.0 authorization code + PKCE, no client secret).** Confirm every detail against the Lichess API docs and the `lichess-org/api-demo` repo before implementing.
+  1. `/auth/lichess/start`: create random `state` and `code_verifier`, `code_challenge = base64url(sha256(verifier))`. Store hash(state) → verifier, current guest player and a validated relative `return_to`, with a 10-minute expiry. Redirect to `LICHESS_BASE_URL/oauth` with `response_type=code`, `client_id`, `redirect_uri=BASE_URL/api/auth/lichess/callback`, `code_challenge_method=S256`, `code_challenge`, `state`. Request no scopes; identity only.
+  2. Callback: look up and delete the state row (reject if missing or expired); POST `LICHESS_BASE_URL/api/token` with `grant_type=authorization_code`, `code`, `code_verifier`, `redirect_uri`, `client_id`.
+  3. GET `/api/account` with the bearer token to read the Lichess `id` and `username`.
+  4. Revoke the token right away (DELETE `/api/token`). We never store Lichess tokens.
+  5. Find the user by `lichess_user_id` or create one. Use the Lichess username if free, else append a numeric suffix. Merge the guest, create the session, redirect to `return_to`.
+- **Rate limits** (in-memory token buckets, injected, not global): login/register 10 per minute per IP and per username; guesses and hints 30 per minute per player; OAuth start 10 per minute per IP.
+
+### 10.7 Leaderboards
+
+Daily: solved attempts for the puzzle with `is_archive = false`, ordered per §8.5, top N plus the caller's rank (window function). All-time: from `player_stats` joined to users (guests excluded).
+
+### 10.8 Observability
+
+`slog` JSON logs with request id, method, path, status, duration. No PII beyond username. `/api/health` pings the DB with a short timeout.
+
+---
+
+## 11. Quality
+
+### 11.1 Security checklist
+
+Argon2id passwords; hashed session tokens; secure cookie flags; origin check on state-changing requests; parameterized SQL only (sqlc); strict input validation and request body size limit (e.g. 16 KiB); security headers (CSP with `default-src 'self'` plus what Vite output and Comlink workers need, `X-Content-Type-Options`, `Referrer-Policy`, `frame-ancestors 'none'`); rate limits; no secrets in logs; solution never sent before an attempt finishes (tested); `return_to` accepts relative paths only (no open redirect).
+
+### 11.2 Testing strategy
+
+| Package | Tests |
+|---|---|
+| engine | Unit + property (fast-check) + perft + brute-force cross-checks; coverage ≥ 90% statements |
+| generator | Determinism test (same seed ⇒ byte-identical output), `verify` on a committed 20-puzzle fixture |
+| api | Unit tests for feedback, hints, streaks and day boundaries (fake clock); integration tests against real Postgres for every endpoint, including auth, merge, concurrency (two simultaneous guesses on one attempt) and the no-solution-leak test; coverage ≥ 75% |
+| cross-language | `fixtures/replay-vectors.json`: ≥ 500 random legal games (with castling, en passant, promotions, underpromotions) plus ≥ 100 games with one illegal move injected, each with expected `finalKey` or `illegalAt`. Generated by the engine (`pnpm --filter @retrograde/engine fixtures`), checked by a Go test. `fixtures/feedback-vectors.json` from §8.3. |
+| web | Component tests (feedback row, move input, share text builder, Lab report rendering); Playwright e2e for the journeys in §1.4, using a seeded test puzzle with a known solution |
+
+### 11.3 CI (GitHub Actions)
+
+On every push and PR, on Ubuntu: install with caches; lint, typecheck and fast tests for all TS packages; `go vet`, golangci-lint and `go test` with a Postgres service container; check that generated code is up to date (`pnpm gen` produces no diff); build the web app and the Docker image. A second job on `windows-latest` runs `pnpm install`, the TS fast tests and the Go unit tests, so the scripts stay Windows-compatible. Run slow tests on a nightly schedule.
+
+### 11.4 Accessibility and performance
+
+- Lighthouse accessibility ≥ 95 on `/daily` and `/lab`; full keyboard play possible (type SAN or UCI into a move input as an alternative to dragging).
+- Main-thread JS bundle aim: ≤ 250 KB gzipped (the worker is loaded separately). Record actual sizes in `PROGRESS.md`.
+- Visual direction: a "detective's casebook": warm paper tones in light mode, deep ink in dark mode, a serif display face for headings, a clean sans for UI, monospace for notation. Self-host fonts via `@fontsource` (OFL). Choose a board piece set whose license is GPL-compatible and record it in `DECISIONS.md`.
+
+### 11.5 Deployment
+
+Multi-stage `Dockerfile`: build web (Node) → build Go binary embedding `dist/` → minimal runtime image running as non-root. `retrograde migrate` runs on start (or as a release step). Document one complete deployment path (for example Fly.io or Render with managed Postgres, or a small VPS with Docker Compose) in `docs/DEPLOY.md`, including how to import puzzles and schedule a year of dailies.
+
+### 11.6 README (this project is a portfolio piece)
+
+Live demo link, a GIF of solving a daily and of the Lab, a one-paragraph pitch, an architecture diagram, an **"Interesting problems"** section (retraction completeness, admissible bounds and the castling trap, memoized uniqueness counting, matching-based capture accounting, keeping chess rules consistent across Go and TS), how to run locally, test commands, license.
+
+---
+
+## 12. Phases and acceptance criteria
+
+Each phase ends with the routine in `CLAUDE.md`: checks green, `PROGRESS.md`, `docs/learning/phase-N.md`, commit, tag `phase-N`, stop.
+
+### Phase 0: Foundations
+Refs: §3 (especially §3.5), §11.3. Deliverables: pnpm workspace with the three TS packages (engine as an empty library with one passing test), Go module with `serve` and `GET /api/health`, `api/openapi.yaml` with the health endpoint, codegen wired (`pnpm gen`), docker-compose Postgres, goose with an initial empty migration, the root scripts listed in `CLAUDE.md` (cross-platform, with the `prepare` hook setup), `.gitignore` (including `.env`, `node_modules`, build output, `.claude/settings.local.json`), ESLint/Prettier/golangci-lint configs, CI workflow, `LICENSE` (GPL-3.0-or-later), `.env.example`, `.nvmrc`, README skeleton, `docs/PROGRESS.md` and `docs/DECISIONS.md` filled in. Before installing anything, check which tools exist on the machine (`node -v`, `pnpm -v`, `go version`, `docker version`, `psql --version`) and report what's missing with Windows install instructions.
+- [ ] On the owner's Windows machine, with the local PostgreSQL: `pnpm install`, `pnpm db:migrate` and `pnpm check` pass on a clean clone. The same commands pass in CI on Ubuntu.
+- [ ] `pnpm dev` serves a placeholder web page that calls `/api/health` through the Vite proxy and shows "API: ok".
+- [ ] `pnpm gen` regenerates code with no diff.
+- [ ] `git config core.hooksPath` prints `.githooks` after `pnpm install`, and a test commit containing a Claude `Co-Authored-By` trailer is stored without it.
+- [ ] CI runs green on GitHub (Ubuntu and Windows jobs).
+
+### Phase 1: Engine core
+Refs: §4. 
+- [ ] All perft rows pass at the fast-suite depths; slow suite passes depth 5 and start position depth 6.
+- [ ] Property tests for FEN, make/unmake, Zobrist and SAN/UCI round-trips pass.
+- [ ] `replay` handles every special move.
+- [ ] Perft nodes/second recorded in `PROGRESS.md`.
+
+### Phase 2: Retro analysis
+Refs: §5.
+- [ ] Every rule in §5.2 implemented, each with trigger and non-trigger tests.
+- [ ] Retraction completeness and soundness property tests pass (2,000 fast / 50,000 slow).
+- [ ] ≥ 30 curated fixtures with the expected verdicts, including the §5.5 table.
+- [ ] `lastMoves` with depth and limits; `LAST_MOVE_FORCED` and `NO_POSSIBLE_LAST_MOVE` tested.
+- [ ] `pnpm --filter @retrograde/engine fixtures` writes `fixtures/replay-vectors.json` per §11.2.
+
+### Phase 3: Proof-game solver
+Refs: §6.
+- [ ] Admissibility property test passes over ≥ 5,000 random games (fast) / 100,000 (slow), including castling, promotion and en passant games.
+- [ ] Brute-force cross-check matches for N ≤ 4 (fast) and N = 5 (slow).
+- [ ] Every random-game target up to N = 10 in the test sample is solved with status `complete`.
+- [ ] `bench` results recorded; median at N = 8 within the §6.5 target.
+- [ ] `analyzePosition` returns `legal` with a proof for the §5.5 legal fixture.
+
+### Phase 4: Puzzle generator
+Refs: §7.
+- [ ] `generate`, `verify`, `stats` commands work; output is deterministic for a seed (test).
+- [ ] Every emitted puzzle passes `verify` (re-solved unique and shortest).
+- [ ] A pool of ≥ 400 puzzles covering all 5 difficulty levels, with at least 40 per level, committed to `data/puzzles-v1.jsonl` (or regenerable by a documented command if large). Report the distribution.
+
+### Phase 5: Web shell and Lab
+Refs: §9, §11.4. Deliverables: routing and layout for every route (`/`, `/daily`, `/daily/:number`, `/archive`, `/lab`, `/leaderboard`, `/u/:username`, `/login`, `/register`, `/about`, 404), visual design system, `Board` wrapper, worker client, the complete Lab, and an `/about` page explaining retrograde analysis with interactive examples. Pages that need the API show tasteful placeholders until Phase 7.
+- [ ] Lab: edit, paste FEN, auto-analysis, detective notes with highlights, last moves with take-back, Prove with progress and Cancel, permalinks, example gallery.
+- [ ] Works at 360px; keyboard accessible; component tests for the report and notes.
+- [ ] Playwright: open the Lab with an illegal example, see the verdict and reason.
+
+### Phase 6: API core
+Refs: §8, §10, §11.1.
+- [ ] Migrations for §10.3; `import-puzzles` (idempotent) and `schedule` subcommands.
+- [ ] Endpoints in §10.4 except Lichess, matching `openapi.yaml`.
+- [ ] Guests, register, login, logout, guest merge, session rotation.
+- [ ] Guess submission per §10.5 with feedback vectors passing; hints; streaks and stats; daily and all-time leaderboards.
+- [ ] Integration tests for every endpoint, including the no-solution-leak test and concurrent guess submission.
+- [ ] Go replay matches `fixtures/replay-vectors.json`.
+- [ ] `pnpm seed` imports the fixture puzzles and schedules them starting today for local dev.
+
+### Phase 7: Daily UI, leaderboards, profiles, archive
+Refs: §8, §10.4.
+- [ ] Daily play end to end: board input, ply counter, difference overlay, submit, feedback rows with icons and `aria-live`, hints, win/lose screens, solution playback, share card exactly per §8.6.
+- [ ] Register/login pages; header shows guest vs user; guest progress survives signing up.
+- [ ] Leaderboards, profile with guess distribution, archive list and archive play.
+- [ ] Playwright: a guest solves the seeded daily using the known solution; a user registers and keeps the result; the leaderboard shows them.
+
+### Phase 8: Sign in with Lichess
+Refs: §10.6.
+- [ ] Full PKCE flow against a fake Lichess server in tests (state mismatch, expired state, token error and username collision cases covered).
+- [ ] Manual check against real lichess.org in development, documented in `PROGRESS.md`.
+- [ ] Tokens revoked after use and never stored or logged.
+
+### Phase 9: Polish and ship
+Refs: §11.
+- [ ] Production Docker image; `docs/DEPLOY.md`; the app deployed and reachable (the human provides hosting credentials; Claude prepares everything else).
+- [ ] Lighthouse accessibility ≥ 95 on `/daily` and `/lab`; bundle sizes recorded.
+- [ ] README per §11.6 with screenshots or GIFs (the human may record them; leave clear placeholders).
+- [ ] Security checklist §11.1 reviewed line by line, with results in `PROGRESS.md`.
+- [ ] `docs/RUNNING.md`: how to run everything locally on Windows from a fresh clone (install, `.env`, migrate, seed, `pnpm dev`, `pnpm start`), every test command, and a **manual test checklist** covering each journey in §1.4 plus the Lab examples, archive, leaderboards, profile, Lichess login and share card. Each item says what to click and what you should see.
+- [ ] Final full run on the owner's machine: from a fresh clone, every command in `RUNNING.md` succeeds, and the whole automated suite passes (`pnpm check`, slow engine tests, `pnpm test:api`, `pnpm test:e2e`). Results recorded in `PROGRESS.md`.
+
+---
+
+## 13. Out of scope for v1 (ideas for later)
+
+Case Files story campaign with Holmes-style narration; composer mode with the uniqueness checker; head-to-head races; partial retrograde analysis puzzles; fairy-chess proof games; puzzle ratings with Glicko-2 from solve results; porting the solver to Go or Rust/WASM to compare performance; stretch rules from §5.6.
+
+---
+
+## 14. References
+
+- Retrograde analysis and proof games: Wikipedia articles "Retrograde analysis" and "Proof game"; The Retrograde Analysis Corner (janko.at/Retros); Elkies & Stanley, *Chess and Mathematics* (proof game section).
+- Existing solvers, for ideas only: Natch, Euclide, Jacobi (wismuth.com/jacobi), Popeye (github.com/thomas-maeder/popeye). Don't copy their code; respect their licenses.
+- Chess programming: chessprogramming.org (0x88, Perft Results, Zobrist hashing, Move Generation).
+- Lichess API docs (OAuth PKCE, `/api/account`), `lichess-org/api-demo`.
+- chessground (github.com/lichess-org/chessground).

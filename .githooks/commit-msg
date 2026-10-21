@@ -1,0 +1,15 @@
+#!/bin/sh
+# Keeps every commit authored only by the repository owner.
+# Removes AI co-author trailers, session links and "Generated with" lines
+# from the commit message. Enabled by: git config core.hooksPath .githooks
+msg_file="$1"
+tmp_file="$msg_file.tmp"
+
+grep -v -i -E \
+  -e '^Co-Authored-By:.*(anthropic|claude)' \
+  -e '^Claude-Session:' \
+  -e 'Generated with \[?Claude' \
+  "$msg_file" > "$tmp_file" || true
+
+mv "$tmp_file" "$msg_file"
+exit 0
