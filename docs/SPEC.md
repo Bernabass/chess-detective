@@ -587,6 +587,7 @@ The engine worker is exposed with Comlink: `analyze(fen)`, `lastMoves(fen, depth
 |---|---|---|
 | `DATABASE_URL` | `postgres://postgres:<password>@localhost:5432/retrograde?sslmode=disable` | Development database |
 | `TEST_DATABASE_URL` | `postgres://postgres:<password>@localhost:5432/retrograde_test?sslmode=disable` | Used only by integration tests |
+| `HOST` | `127.0.0.1` (default), `0.0.0.0` in a container | Listen address. The default keeps the dev server private to the machine (no Windows firewall prompt). |
 | `PORT` | `8080` | |
 | `BASE_URL` | `http://localhost:5173` in dev | Used for redirects, origin checks, share links |
 | `LAUNCH_DATE` | `2026-11-01` | Puzzle #1 date (UTC) |
