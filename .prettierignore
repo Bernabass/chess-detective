@@ -8,5 +8,5 @@ LICENSE
 **/*.gen.ts
 apps/web/src/api/schema.d.ts
 services/api/internal/**/*.gen.go
-# Editor settings (personal, not committed)
+# Personal editor settings (also gitignored)
 .vscode/
