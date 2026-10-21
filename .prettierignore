@@ -1,0 +1,12 @@
+pnpm-lock.yaml
+**/dist/
+**/coverage/
+LICENSE
+# Prose is formatted by hand.
+**/*.md
+# Generated code.
+**/*.gen.ts
+apps/web/src/api/schema.d.ts
+services/api/internal/**/*.gen.go
+# Editor settings (personal, not committed)
+.vscode/
