@@ -1,0 +1,22 @@
+version: '2'
+run:
+  # Lint the integration tests too.
+  build-tags:
+    - integration
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+    - misspell
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
+    - unconvert
+  exclusions:
+    generated: strict
+formatters:
+  enable:
+    - gofmt
+    - goimports

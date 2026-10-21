@@ -1,0 +1,7 @@
+# Go server code from api/openapi.yaml. Run through `pnpm gen`; never edit the output.
+package: httpapi
+output: internal/httpapi/openapi.gen.go
+generate:
+  models: true
+  std-http-server: true
+  strict-server: true
