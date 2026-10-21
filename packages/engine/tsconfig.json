@@ -1,0 +1,8 @@
+{
+  // Library code is checked again by tsconfig.lib.json without Node types (the engine has no Node APIs).
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"]
+  },
+  "include": ["src", "test", "vitest.config.ts", "vitest.slow.config.ts"]
+}
