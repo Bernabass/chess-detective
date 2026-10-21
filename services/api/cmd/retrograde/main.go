@@ -33,6 +33,8 @@ Commands:
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// After the first Ctrl+C, restore default signal handling so a second one exits immediately.
+	context.AfterFunc(ctx, stop)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
 	os.Exit(code)

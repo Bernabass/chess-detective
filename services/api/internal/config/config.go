@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -21,7 +22,7 @@ type Config struct {
 
 // Addr is the address the HTTP server listens on.
 func (c Config) Addr() string {
-	return c.Host + ":" + strconv.Itoa(c.Port)
+	return net.JoinHostPort(c.Host, strconv.Itoa(c.Port)) // brackets IPv6 hosts
 }
 
 // ErrMissingDatabaseURL is returned when DATABASE_URL is not set anywhere.

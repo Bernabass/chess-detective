@@ -36,6 +36,7 @@ func NewHandler(opts Options) http.Handler {
 	if opts.HealthTimeout == 0 {
 		opts.HealthTimeout = 2 * time.Second
 	}
+	opts.Logger = withRequestIDLogging(opts.Logger)
 	srv := &Server{logger: opts.Logger, db: opts.DB, healthTimeout: opts.HealthTimeout}
 
 	mux := http.NewServeMux()
@@ -57,11 +58,8 @@ func NewHandler(opts Options) http.Handler {
 			writeProblem(w, http.StatusBadRequest, "The request parameters are invalid.")
 		},
 	})
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
-		writeProblem(w, http.StatusNotFound, "")
-	})
 
-	return withRequestID(withLogging(opts.Logger, withRecover(opts.Logger, mux)))
+	return withRequestID(withLogging(opts.Logger, withRecover(opts.Logger, withProblemFallback(mux))))
 }
 
 // GetHealth reports whether the API is up and the database answers within the timeout.

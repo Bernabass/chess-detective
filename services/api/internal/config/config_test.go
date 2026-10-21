@@ -21,6 +21,7 @@ func TestParseDotEnv(t *testing.T) {
 		"DATABASE_URL=postgres://localhost:5432/db?sslmode=disable&application_name=a%40b\n" +
 		"export PORT = 9090\n" +
 		"QUOTED=\"has # hash\"\n" +
+		"QUOTED_COMMENT=\"v\" # comment\n" +
 		"SINGLE='x y'\n" +
 		"INLINE=value # trailing comment\n" +
 		"EMPTY=\n"
@@ -29,12 +30,13 @@ func TestParseDotEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"DATABASE_URL": "postgres://localhost:5432/db?sslmode=disable&application_name=a%40b",
-		"PORT":         "9090",
-		"QUOTED":       "has # hash",
-		"SINGLE":       "x y",
-		"INLINE":       "value",
-		"EMPTY":        "",
+		"DATABASE_URL":   "postgres://localhost:5432/db?sslmode=disable&application_name=a%40b",
+		"PORT":           "9090",
+		"QUOTED":         "has # hash",
+		"QUOTED_COMMENT": "v",
+		"SINGLE":         "x y",
+		"INLINE":         "value",
+		"EMPTY":          "",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d keys %v, want %d", len(got), got, len(want))
@@ -77,8 +79,9 @@ func TestFindDotEnvSearchesUpwardAndStopsAtRepoRoot(t *testing.T) {
 func TestEnvironPrefersRealEnvironment(t *testing.T) {
 	repo := t.TempDir()
 	mustMkdir(t, filepath.Join(repo, ".git"))
-	mustWrite(t, filepath.Join(repo, ".env"), "RG_TEST_FROM_FILE=file\nRG_TEST_BOTH=file\n")
+	mustWrite(t, filepath.Join(repo, ".env"), "RG_TEST_FROM_FILE=file\nRG_TEST_BOTH=file\nRG_TEST_EMPTY_ENV=file\n")
 	t.Setenv("RG_TEST_BOTH", "env")
+	t.Setenv("RG_TEST_EMPTY_ENV", "")
 
 	lookup, err := Environ(repo)
 	if err != nil {
@@ -89,6 +92,9 @@ func TestEnvironPrefersRealEnvironment(t *testing.T) {
 	}
 	if v, _ := lookup("RG_TEST_BOTH"); v != "env" {
 		t.Errorf("RG_TEST_BOTH = %q, want env (real environment wins)", v)
+	}
+	if v, _ := lookup("RG_TEST_EMPTY_ENV"); v != "file" {
+		t.Errorf("RG_TEST_EMPTY_ENV = %q, want file (an empty variable must not hide .env)", v)
 	}
 	if _, ok := lookup("RG_TEST_UNSET"); ok {
 		t.Error("RG_TEST_UNSET should not be set")
@@ -111,6 +117,16 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.LogLevel != slog.LevelInfo {
 		t.Errorf("LogLevel = %v", cfg.LogLevel)
+	}
+}
+
+func TestAddrBracketsIPv6(t *testing.T) {
+	cfg, err := Load(mapLookup(map[string]string{"DATABASE_URL": "postgres://x", "HOST": "::1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Addr() != "[::1]:8080" {
+		t.Errorf("Addr = %q, want [::1]:8080", cfg.Addr())
 	}
 }
 
