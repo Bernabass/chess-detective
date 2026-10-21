@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Secrets (keep .env.example committed)
+.env
+.env.*
+!.env.example
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+services/api/bin/
+services/api/internal/webui/dist/
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.log
