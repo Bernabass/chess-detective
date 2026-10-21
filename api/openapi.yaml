@@ -33,7 +33,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/Health'
               example: { status: unavailable, db: error }
+        default:
+          $ref: '#/components/responses/Problem'
 components:
+  responses:
+    Problem:
+      description: Any other error, as RFC 9457 problem details.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
   schemas:
     Health:
       type: object

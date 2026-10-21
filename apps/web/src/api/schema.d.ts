@@ -41,7 +41,17 @@ export interface components {
             instance?: string;
         };
     };
-    responses: never;
+    responses: {
+        /** @description Any other error, as RFC 9457 problem details. */
+        Problem: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+    };
     parameters: never;
     requestBodies: never;
     headers: never;
@@ -88,6 +98,7 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
+            default: components["responses"]["Problem"];
         };
     };
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -54,6 +55,10 @@ func Migrate(ctx context.Context, databaseURL string, logger *slog.Logger) error
 	connCfg, err := pgx.ParseConfig(databaseURL)
 	if err != nil {
 		return fmt.Errorf("parsing DATABASE_URL: %w", err)
+	}
+	if connCfg.ConnectTimeout == 0 {
+		// Don't hang forever on a host that silently drops packets.
+		connCfg.ConnectTimeout = 10 * time.Second
 	}
 	sqlDB := stdlib.OpenDB(*connCfg)
 	defer func() { _ = sqlDB.Close() }()

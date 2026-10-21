@@ -43,10 +43,10 @@ func ParseDotEnv(r io.Reader) (map[string]string, error) {
 }
 
 func unquote(value string) string {
-	if len(value) >= 2 {
-		first, last := value[0], value[len(value)-1]
-		if (first == '"' || first == '\'') && first == last {
-			return value[1 : len(value)-1]
+	if value != "" && (value[0] == '"' || value[0] == '\'') {
+		// A quoted value ends at its closing quote; anything after it (e.g. a comment) is ignored.
+		if end := strings.IndexByte(value[1:], value[0]); end >= 0 {
+			return value[1 : end+1]
 		}
 	}
 	if i := strings.Index(value, " #"); i >= 0 {
@@ -84,8 +84,9 @@ func FindDotEnv(dir string) (string, error) {
 type Lookup func(key string) (string, bool)
 
 // Environ returns a Lookup that reads real environment variables first and
-// falls back to the nearest .env file above dir. It never modifies the
-// process environment.
+// falls back to the nearest .env file above dir. A variable that is set but
+// empty counts as unset, so it doesn't hide the .env value. It never modifies
+// the process environment.
 func Environ(dir string) (Lookup, error) {
 	path, err := FindDotEnv(dir)
 	if err != nil {
@@ -103,7 +104,7 @@ func Environ(dir string) (Lookup, error) {
 		}
 	}
 	return func(key string) (string, bool) {
-		if v, ok := os.LookupEnv(key); ok {
+		if v, ok := os.LookupEnv(key); ok && v != "" {
 			return v, true
 		}
 		v, ok := fileValues[key]

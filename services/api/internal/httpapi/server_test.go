@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,6 +93,48 @@ func TestUnknownAPIPathIsProblemJSON(t *testing.T) {
 	assertProblem(t, rec, http.StatusNotFound)
 }
 
+func TestWrongMethodIs405WithAllow(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/health", nil)
+	newTestHandler(fakeDB{}).ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+	if allow := rec.Header().Get("Allow"); !strings.Contains(allow, http.MethodGet) {
+		t.Errorf("Allow = %q, want it to list GET", allow)
+	}
+	assertProblem(t, rec, http.StatusMethodNotAllowed)
+}
+
+func TestHandlerLogLinesCarryRequestID(t *testing.T) {
+	var buf bytes.Buffer
+	h := NewHandler(Options{
+		Logger:        slog.New(slog.NewJSONHandler(&buf, nil)),
+		DB:            fakeDB{err: errors.New("down")},
+		HealthTimeout: 50 * time.Millisecond,
+	})
+	rec := get(t, h, "/api/health")
+	id := rec.Header().Get("X-Request-Id")
+
+	// Two lines: the handler's warning, then the access log line.
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d log lines, want 2:\n%s", len(lines), buf.String())
+	}
+	for _, line := range lines {
+		var entry struct {
+			Msg       string `json:"msg"`
+			RequestID string `json:"request_id"`
+		}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatal(err)
+		}
+		if entry.RequestID != id {
+			t.Errorf("log line %q has request_id %q, want %q", entry.Msg, entry.RequestID, id)
+		}
+	}
+}
+
 func TestRequestIDHeader(t *testing.T) {
 	h := newTestHandler(fakeDB{})
 	first := get(t, h, "/api/health").Header().Get("X-Request-Id")
@@ -118,7 +162,7 @@ func TestLoggingRecordsStatus(t *testing.T) {
 		RequestID string `json:"request_id"`
 	}
 	pr, pw := io.Pipe()
-	logger := slog.New(slog.NewJSONHandler(pw, nil))
+	logger := withRequestIDLogging(slog.New(slog.NewJSONHandler(pw, nil)))
 	h := withRequestID(withLogging(logger, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
 	})))

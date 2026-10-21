@@ -61,6 +61,17 @@ type HealthDb string
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
 
+// Problem RFC 9457 problem details, sent as application/problem+json.
+type Problem struct {
+	Detail   *string `json:"detail,omitempty"`
+	Instance *string `json:"instance,omitempty"`
+	Status   int     `json:"status"`
+	Title    string  `json:"title"`
+
+	// Type Example: about:blank
+	Type string `json:"type"`
+}
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// GetHealth Liveness and database check
@@ -216,6 +227,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	return m
 }
 
+type ProblemApplicationProblemPlusJSONResponse Problem
+
 type GetHealthRequestObject struct {
 }
 
@@ -247,6 +260,23 @@ func (response GetHealth503JSONResponse) VisitGetHealthResponse(w http.ResponseW
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetHealthdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetHealthdefaultApplicationProblemPlusJSONResponse) VisitGetHealthResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
 	_, err := buf.WriteTo(w)
 	return err
 }
