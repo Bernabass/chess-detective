@@ -14,6 +14,6 @@ paths:
 - Response types never contain the puzzle solution unless the player's attempt is finished. Keep the test that asserts `/api/daily` never leaks solution moves.
 - Errors use RFC 9457 `application/problem+json`. Map domain errors to HTTP status codes in one place.
 - Validate every input: lengths, formats, enums. Reject unknown JSON fields.
-- Code generators must run on Windows and Linux. oapi-codegen runs via `go run` with a pinned version. If sqlc or golangci-lint won't run natively on Windows, run them through their official Docker images from a Node script in `scripts/`, and record the choice in DECISIONS.md.
+- Code generators must run on Windows and Linux. oapi-codegen, sqlc, goose and golangci-lint run via `go tool -modfile=tools/go.mod` with versions pinned in `services/api/tools/go.mod` (see DECISIONS.md, 2026-10-22). If sqlc or golangci-lint won't run natively on Windows, run them through their official Docker images from a Node script in `scripts/`, and record the choice in DECISIONS.md.
 - Integration tests use the real Postgres at `TEST_DATABASE_URL` (the `retrograde_test` database), never the development database, isolated per test (transaction rollback or a fresh schema). Lichess is faked with `httptest.Server` via `LICHESS_BASE_URL`.
 - Never log passwords, session tokens, OAuth codes or verifiers.

@@ -1,0 +1,64 @@
+openapi: 3.0.3
+info:
+  title: Retrograde API
+  version: 0.1.0
+  description: |
+    API for Retrograde, chess detective puzzles built on retrograde analysis.
+    This file is the contract: `pnpm gen` generates the Go server interface and the
+    TypeScript client types from it. Change it first, then implement.
+  license:
+    name: GPL-3.0-or-later
+    url: https://www.gnu.org/licenses/gpl-3.0.html
+servers:
+  - url: /api
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness and database check
+      description: Pings the database with a 2-second timeout.
+      tags: [system]
+      responses:
+        '200':
+          description: The API is up and the database answered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example: { status: ok, db: ok }
+        '503':
+          description: The API is up but the database didn't answer in time.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+              example: { status: unavailable, db: error }
+components:
+  schemas:
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status, db]
+      properties:
+        status:
+          type: string
+          enum: [ok, unavailable]
+        db:
+          type: string
+          enum: [ok, error]
+    Problem:
+      description: RFC 9457 problem details, sent as application/problem+json.
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          example: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
