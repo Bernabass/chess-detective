@@ -1,0 +1,12 @@
+packages:
+  - packages/*
+  - apps/*
+
+# Dependencies allowed to run install scripts. esbuild's postinstall only checks its platform binary.
+allowBuilds:
+  esbuild: true
+
+# openapi-typescript declares a TypeScript 5 peer range but works with 6.x (see docs/ARCHITECTURE.md §3.4).
+peerDependencyRules:
+  allowedVersions:
+    openapi-typescript>typescript: '6'

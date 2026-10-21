@@ -1,0 +1,23 @@
+# Optional: a throwaway PostgreSQL for development, as an alternative to a local install.
+# Published on host port 5433 so it can run next to a local PostgreSQL service on 5432.
+# Start: pnpm db:up   Stop: pnpm db:down
+services:
+  postgres:
+    image: postgres:18.4
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: retrograde
+    ports:
+      - '5433:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d retrograde']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  pgdata:
