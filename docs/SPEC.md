@@ -132,7 +132,7 @@ retrograde/
 ├─ .githooks/commit-msg           strips AI attribution from commit messages
 ├─ .gitattributes                 LF line endings everywhere
 ├─ package.json                   root task scripts (no Makefile)
-├─ docker-compose.yml             Postgres for development
+├─ docker-compose.yml             optional Postgres for development (host port 5433)
 ├─ Dockerfile                     production image
 └─ .github/workflows/ci.yml
 ```
@@ -274,6 +274,7 @@ Each rule has a `RuleId`, a test that triggers it and a test that it stays silen
 | `PROMOTION_EXCESS` | illegal | `pawns + minPromotions ≤ 8`, where `minPromotions = max(0,Q−1) + max(0,R−2) + max(0,N−2) + max(0,lightB−1) + max(0,darkB−1)` | "White has 3 queens, so at least 2 were promoted. With 7 pawns still on the board that's 9 pawns, but White only had 8." |
 | `OPPONENT_IN_CHECK` | illegal | The side *not* to move is not in check | "It's White to move, but the black king on e8 is in check from the rook on e7. Black's last move would have left its own king in check." |
 | `TOO_MANY_CHECKERS` | illegal | The side to move has at most 2 checkers | "The black king is in check from 3 pieces at once; one move can create at most a double check." |
+| `PAWN_STRUCTURE_IMPOSSIBLE` | illegal | A side's pawns can be assigned to distinct starting files at all (§5.2.1) | "The white pawn on a3 has no possible starting file: it could only have come from the a- or b-file, and both of those pawns are still on rank 2." |
 | `PAWN_CAPTURES_EXCEED_MISSING` | illegal | Min captures made by a side's pawns ≤ opponent's missing pieces (§5.2.1) | "White's pawns needed at least 1 capture to get where they are (the doubled c-pawns), but all 16 black pieces are still on the board." |
 | `CASTLING_RIGHTS_INCONSISTENT` | illegal | Every claimed castling right has king and rook on their original squares | "The FEN says White can castle kingside, but the white king is on f1." |
 | `EN_PASSANT_INCONSISTENT` | illegal | En passant square set ⇒ the matching pawn just double-pushed: pawn on rank 4/5 behind the square, ep square and the pawn's start square empty, side to move matches | |
@@ -281,7 +282,7 @@ Each rule has a `RuleId`, a test that triggers it and a test that it stays silen
 | `PROMOTED_PIECE_REQUIRED` | deduction | Same formula as `PROMOTION_EXCESS` > 0 | "At least one white bishop is a promoted pawn: White has two dark-squared bishops." |
 | `CAPTURES_REQUIRED` | deduction | Lower bound of captures by each side's pawns > 0 | "White's pawns made at least 2 captures." |
 | `CASTLING_LOST` | deduction | King or rook not on its original square | "White can no longer castle kingside: the h1 rook has moved." |
-| `LAST_MOVE_FORCED` | deduction | Exactly one viable retraction at the requested depth | "Black's last move must have been …Kh8-g8." |
+| `LAST_MOVE_FORCED` | deduction | Exactly one distinct last move (UCI) among the viable retractions at the requested depth. Retractions that differ only in the piece un-captured count as one move. | "Black's last move must have been …Kh8-g8." / "Black's last move must have been …Kxg8, capturing a knight or a bishop." |
 
 #### 5.2.1 Pawn capture accounting (the matching rule)
 
@@ -289,7 +290,8 @@ Every pawn starts on its own file. Each file change needs one capture. For one c
 - Let the current pawns be p₁..pₖ (k ≤ 8) and the starting files be a..h.
 - Cost of assigning pawn pᵢ on file f to starting file s is `|f − s|`. It's infinite if the pawn couldn't have reached its rank from rank 2 (rank 7 for Black) with that many file changes: the file distance must be ≤ the rank distance travelled.
 - Min-cost assignment of pawns to distinct starting files (Hungarian algorithm; matrix is at most 8×8) gives the minimum number of captures by those pawns.
-- If that minimum exceeds the opponent's missing pieces (16 − opponent piece count), the position is illegal.
+- If no assignment with finite cost exists, the position is illegal by `PAWN_STRUCTURE_IMPOSSIBLE`. Example: white pawns on a2, b2, a3, b3. The a3 pawn could only have started on the a- or b-file, and both of those pawns are still on rank 2. The message names a pawn that has no possible starting file (a pawn left unmatched by a maximum matching on the finite-cost edges).
+- If that minimum exceeds the opponent's missing pieces (16 − opponent piece count), the position is illegal by `PAWN_CAPTURES_EXCEED_MISSING`.
 
 This ignores promoted pawns and pieces captured by non-pawns. That's a relaxation, so the bound stays valid. A tighter version is a stretch goal (§5.6).
 
@@ -315,10 +317,9 @@ Castling rights simplification: a normal retraction copies P's castling rights i
 ### 5.4 Last-move analysis
 
 `lastMoves(p, { depth, timeLimitMs, nodeLimit, shouldStop })`:
-- A retraction is **viable at depth 1** if P′ passes every static rule.
-- It's **viable at depth k** if P′ is the initial position, or P′ has a retraction viable at depth k−1.
+- A retraction to P′ is **viable at depth k** (k ≥ 1) if P′ passes every static rule *except* `NO_POSSIBLE_LAST_MOVE` (that rule is defined by viability, so including it would be circular), **and** one of these holds: k = 1; P′ is the initial position; or P′ has a retraction that is viable at depth k−1. (Decided 2026-10-22, see `DECISIONS.md`.)
 - Output: every depth-1 retraction with its viability at the requested depth, described in words ("White's last move could have been Bf1xb5, capturing a black knight").
-- No viable retraction at any depth ⇒ illegal (sound, since retractions are complete and static rules are sound). Exactly one ⇒ `LAST_MOVE_FORCED`.
+- No viable retraction at any depth ⇒ illegal (sound, since retractions are complete and static rules are sound). Exactly one distinct move (UCI) among the viable retractions ⇒ `LAST_MOVE_FORCED`. If that move has several viable un-captures, the message lists the possible captured pieces ("…capturing a knight or a bishop").
 - Halfmove clocks, repetition and the 50/75-move rules are ignored.
 
 ### 5.5 Tests
@@ -428,7 +429,7 @@ The castling move then counts once (through the king), so the bound stays admiss
 ### 7.1 CLI
 
 ```
-generator generate --count 400 --seed 42 --min-plies 5 --max-plies 12 --jobs 4 --out puzzles.jsonl
+generator generate --count 500 --seed 42 --min-plies 5 --max-plies 12 --jobs 4 --out puzzles.jsonl
 generator verify puzzles.jsonl
 generator stats puzzles.jsonl
 ```
@@ -452,7 +453,7 @@ Features detected from the solution: `capture`, `promotion`, `underpromotion`, `
 Difficulty, a starting formula to tune with real data:
 `score = plies + 1.5·(captures) + 3·promotions + 4·underpromotions + 2·castling + 3·enPassant + 2·switchbacks + 2·tempo + log2(solverNodesFindOne) / 4`
 
-The score maps to 1–5 stars by quantiles of the generated pool. Rough intended ply ranges: ★ 5–6, ★★ 7–8, ★★★ 8–9, ★★★★ 10–11, ★★★★★ 12 or special features.
+The score maps to 1–5 stars by quantiles of the generated pool, with cut points chosen to match the weekly ramp (§8.7): the lowest 1/7 of scores is ★, up to 3/7 is ★★, up to 5/7 is ★★★, up to 6/7 is ★★★★, and the top 1/7 is ★★★★★. So the pool's level mix matches how often each level is scheduled (★ 1 day a week, ★★ 2, ★★★ 2, ★★★★ 1, ★★★★★ 1). Rough intended ply ranges: ★ 5–6, ★★ 7–8, ★★★ 8–9, ★★★★ 10–11, ★★★★★ 12 or special features.
 
 ### 7.4 Output (one JSON object per line)
 
@@ -508,14 +509,14 @@ Add at least 10 more, including a guess identical to the solution (`G…G`) and 
 
 1. **Movers:** which piece types moved at least once, per color ("White: knight, pawn · Black: knight").
 2. **Captures:** the plies where captures happen, or "no captures".
-3. **One move:** reveals the solution move at the earliest ply that isn't green in any guess so far.
+3. **One move:** reveals the solution move at the first ply that isn't green in the player's most recent guess. If the player hasn't guessed yet, it reveals the first move of the solution (ply 1). (Decided 2026-10-22: the older "not green in any guess so far" wording could leave nothing to reveal when different guesses together cover every ply.)
 
 Hints are served by the server, in order, one per request.
 
 ### 8.5 Results, ranking and stats
 
 - Daily leaderboard ordering: solved first, then fewer guesses, then fewer hints, then shorter solve time (`finished_at − started_at`, where `started_at` is when the server first sent today's puzzle to that player).
-- Streak: consecutive UTC days with a solved daily (archive play doesn't count). Track current and max streak.
+- Streak: consecutive UTC days with a solved daily (archive play doesn't count). A solve counts for the puzzle's own day, even if it finishes after midnight UTC (§10.5). Track current and max streak.
 - Profile stats: played, solved, win %, current/max streak, guess distribution (1–6 and failed), average hints.
 
 ### 8.6 Share card (copied to clipboard)
@@ -534,7 +535,8 @@ A failed attempt shows `X/6`. With no hints, omit the `🔍n` part.
 ### 8.7 Scheduling and archive
 
 - Weekly difficulty ramp: Mon ★, Tue ★★, Wed ★★, Thu ★★★, Fri ★★★, Sat ★★★★, Sun ★★★★★.
-- `retrograde schedule --from YYYY-MM-DD --days 365` deterministically assigns unscheduled puzzles by weekday difficulty and fails loudly if the pool runs out of a level.
+- `retrograde schedule --from YYYY-MM-DD --days 365` deterministically assigns unscheduled puzzles by weekday difficulty and fails loudly if the pool runs out of a level. It always prints how many unscheduled puzzles of each level remain (after scheduling, or at the point of failure).
+- A year needs about 53 each of ★, ★★★★ and ★★★★★ and about 105 each of ★★ and ★★★, which is why the pool has at least 500 puzzles with ramp-shaped cut points (§7.3).
 - Puzzles from earlier days are playable in archive mode: same UI, attempts flagged `archive`, excluded from leaderboards and streaks. The solution is still revealed only after finishing.
 
 ### 8.8 Guests
@@ -577,7 +579,7 @@ The engine worker is exposed with Comlink: `analyze(fen)`, `lastMoves(fen, depth
 - `internal/httpapi`: generated server interface implementation, middleware (request ID, logging, recover, security headers, rate limits, CSRF/origin check), problem+json errors.
 - `internal/auth`: passwords, sessions, guests, merge, Lichess OAuth.
 - `internal/daily`: puzzle of the day, attempts, guesses, feedback, hints, streaks. Pure functions where possible.
-- `internal/leaderboard`, `internal/chessrules` (adapter around the Go chess library: `Replay(ucis) (targetKey, error)`), `internal/store` (sqlc + transaction helper), `internal/clock`, `internal/webui` (embedded `dist/`, SPA fallback to `index.html`).
+- `internal/leaderboard`, `internal/chessrules` (adapter around the Go chess library: `Replay(ucis) (targetKey, error)`), `internal/store` (sqlc + transaction helper), `internal/clock`, `internal/webui` (embedded `dist/`, SPA fallback to `index.html`). `go:embed` can't read files outside the Go module, so the build copies `apps/web/dist` into `services/api/internal/webui/dist` (gitignored) before compiling the binary.
 
 ### 10.2 Configuration (environment)
 
@@ -592,6 +594,7 @@ The engine worker is exposed with Comlink: `analyze(fen)`, `lastMoves(fen, depth
 | `LICHESS_BASE_URL` | `https://lichess.org` | Overridable for tests |
 | `LICHESS_CLIENT_ID` | `retrograde` | Lichess PKCE needs no registration; any stable id works (verify in Lichess docs) |
 | `LOG_LEVEL` | `info` | |
+| `TRUSTED_PROXIES` | `10.0.0.0/8,127.0.0.1` | Comma-separated IPs/CIDRs. `X-Forwarded-For` is honoured only when the direct peer is in this list; otherwise the client IP is the TCP peer address. Empty (the default) trusts no proxy. Used for per-IP rate limits and logs. |
 
 ### 10.3 Data model (sketch; finalize in Phase 6)
 
@@ -689,7 +692,7 @@ All paths are under `/api`. JSON in and out; errors use `application/problem+jso
 
 | Method & path | Auth | Purpose |
 |---|---|---|
-| `GET /health` | none | Liveness + DB ping |
+| `GET /health` | none | Liveness + DB ping: 200 `{"status":"ok","db":"ok"}`, or 503 `{"status":"unavailable","db":"error"}` if the database doesn't answer within 2 seconds |
 | `GET /auth/me` | session | Current player: `{ guest: bool, username?, stats }` |
 | `POST /auth/register` | session (guest ok) | `{username, password}` → creates user, merges guest, rotates session |
 | `POST /auth/login` | session (guest ok) | Same merge and rotation |
@@ -697,7 +700,7 @@ All paths are under `/api`. JSON in and out; errors use `application/problem+jso
 | `GET /auth/lichess/start?return_to=` | none | 302 to Lichess authorize URL (§10.6) |
 | `GET /auth/lichess/callback` | none | Completes OAuth, 302 to `return_to` |
 | `GET /daily` | creates guest session if missing | Today's puzzle: `{number, day, plies, target, difficulty, attempt: {status, guesses[{moves, feedback}], hintsUsed, hints[]}, solution?}` (`solution` only when finished) |
-| `GET /daily/{number}` | session | Same shape for an archive puzzle (number ≤ today's) |
+| `GET /daily/{number}` | creates guest session if missing | Same shape for an archive puzzle (number ≤ today's) |
 | `POST /daily/{number}/guesses` | session | `{moves: string[]}` → `{feedback, status, solution?}` |
 | `POST /daily/{number}/hints` | session | Next hint → `{hintIndex, hint}` |
 | `GET /leaderboards/daily/{number}?limit=100` | none | Top entries + the caller's own rank if signed in |
@@ -707,10 +710,10 @@ All paths are under `/api`. JSON in and out; errors use `application/problem+jso
 
 ### 10.5 Guess submission (one transaction)
 
-1. Resolve the puzzle by number; reject future numbers (404) and anything over 40 plies.
-2. Get or create the attempt (`is_archive = number < today's number`); `SELECT … FOR UPDATE` the attempt row.
+1. Reject a request body with more than 40 moves (400) before touching the database. Resolve the puzzle by number; reject future numbers (404).
+2. Get or create the attempt; `SELECT … FOR UPDATE` the attempt row. `is_archive = number < today's number` is fixed when the attempt is created and never recomputed, so an attempt started before 00:00 UTC and finished after it still counts as a daily (not archive) attempt, and its solve counts for the **puzzle's own day** (streaks and the daily leaderboard).
 3. Reject if the attempt is finished (409) or already has 6 guesses (409).
-4. Validate input: exactly `plies` moves, each matching `^[a-h][1-8][a-h][1-8][qrbn]?$`. Replay through `chessrules`; an illegal move gives 422 with the ply index.
+4. Validate input: exactly the puzzle's `plies` moves (422 otherwise), each matching `^[a-h][1-8][a-h][1-8][qrbn]?$`. Replay through `chessrules`; an illegal move gives 422 with the ply index.
 5. Compute feedback (§8.3). Solved if the replayed target key equals the target.
 6. Insert the guess. If solved, or failed on guess 6, set the status and `finished_at`, then update `player_stats` (skip streaks and leaderboards for archive attempts).
 7. Return feedback and status, plus the solution only if the attempt just finished.
@@ -727,7 +730,7 @@ All paths are under `/api`. JSON in and out; errors use `application/problem+jso
   3. GET `/api/account` with the bearer token to read the Lichess `id` and `username`.
   4. Revoke the token right away (DELETE `/api/token`). We never store Lichess tokens.
   5. Find the user by `lichess_user_id` or create one. Use the Lichess username if free, else append a numeric suffix. Merge the guest, create the session, redirect to `return_to`.
-- **Rate limits** (in-memory token buckets, injected, not global): login/register 10 per minute per IP and per username; guesses and hints 30 per minute per player; OAuth start 10 per minute per IP.
+- **Rate limits** (in-memory token buckets, injected, not global): login/register 10 per minute per IP and per username; guesses and hints 30 per minute per player; OAuth start 10 per minute per IP. The client IP comes from `X-Forwarded-For` only when the request arrives from an address in `TRUSTED_PROXIES` (§10.2).
 
 ### 10.7 Leaderboards
 
@@ -757,7 +760,7 @@ Argon2id passwords; hashed session tokens; secure cookie flags; origin check on 
 
 ### 11.3 CI (GitHub Actions)
 
-On every push and PR, on Ubuntu: install with caches; lint, typecheck and fast tests for all TS packages; `go vet`, golangci-lint and `go test` with a Postgres service container; check that generated code is up to date (`pnpm gen` produces no diff); build the web app and the Docker image. A second job on `windows-latest` runs `pnpm install`, the TS fast tests and the Go unit tests, so the scripts stay Windows-compatible. Run slow tests on a nightly schedule.
+On every push and PR, on Ubuntu: install with caches; lint, typecheck and fast tests for all TS packages; `go vet`, golangci-lint and `go test` with a Postgres service container; check that generated code is up to date (`pnpm gen` produces no diff); build the web app and (from Phase 9, when the `Dockerfile` exists) the Docker image. Go module and build caches are cached between runs. A second job on `windows-latest` runs `pnpm install`, the TS fast tests and the Go unit tests, so the scripts stay Windows-compatible. Run slow tests on a nightly schedule.
 
 ### 11.4 Accessibility and performance
 
@@ -767,7 +770,7 @@ On every push and PR, on Ubuntu: install with caches; lint, typecheck and fast t
 
 ### 11.5 Deployment
 
-Multi-stage `Dockerfile`: build web (Node) → build Go binary embedding `dist/` → minimal runtime image running as non-root. `retrograde migrate` runs on start (or as a release step). Document one complete deployment path (for example Fly.io or Render with managed Postgres, or a small VPS with Docker Compose) in `docs/DEPLOY.md`, including how to import puzzles and schedule a year of dailies.
+Multi-stage `Dockerfile`: build web (Node) → copy `apps/web/dist` into `services/api/internal/webui/dist` → build Go binary embedding it → minimal runtime image running as non-root. `retrograde migrate` runs on start (or as a release step). Document one complete deployment path (for example Fly.io or Render with managed Postgres, or a small VPS with Docker Compose) in `docs/DEPLOY.md`, including how to import puzzles and schedule a year of dailies.
 
 ### 11.6 README (this project is a portfolio piece)
 
@@ -814,7 +817,7 @@ Refs: §6.
 Refs: §7.
 - [ ] `generate`, `verify`, `stats` commands work; output is deterministic for a seed (test).
 - [ ] Every emitted puzzle passes `verify` (re-solved unique and shortest).
-- [ ] A pool of ≥ 400 puzzles covering all 5 difficulty levels, with at least 40 per level, committed to `data/puzzles-v1.jsonl` (or regenerable by a documented command if large). Report the distribution.
+- [ ] A pool of ≥ 500 puzzles covering all 5 difficulty levels with the weekly-ramp cut points (§7.3), enough for 365 days of the ramp (≥ 53 each of ★, ★★★★, ★★★★★ and ≥ 105 each of ★★, ★★★), committed to `data/puzzles-v1.jsonl` (or regenerable by a documented command if large). Report the distribution.
 
 ### Phase 5: Web shell and Lab
 Refs: §9, §11.4. Deliverables: routing and layout for every route (`/`, `/daily`, `/daily/:number`, `/archive`, `/lab`, `/leaderboard`, `/u/:username`, `/login`, `/register`, `/about`, 404), visual design system, `Board` wrapper, worker client, the complete Lab, and an `/about` page explaining retrograde analysis with interactive examples. Pages that need the API show tasteful placeholders until Phase 7.
