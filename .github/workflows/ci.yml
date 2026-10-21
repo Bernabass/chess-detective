@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '17 3 * * *' # nightly slow tests
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  ubuntu:
+    name: Ubuntu (check, API tests, codegen, build)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.4
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: retrograde
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d retrograde"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/retrograde?sslmode=disable
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/retrograde_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      # Caches Go's module and build caches, so the pinned tools (sqlc, golangci-lint…) aren't recompiled every run.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: services/api/go.mod
+          cache: true
+          cache-dependency-path: |
+            services/api/go.sum
+            services/api/tools/go.sum
+      - name: Create the test database
+        run: psql "postgres://postgres:postgres@localhost:5432/retrograde" -c "CREATE DATABASE retrograde_test"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
+      - run: pnpm check
+      - run: pnpm test:api
+      - name: Generated code is up to date
+        run: |
+          pnpm gen
+          git status --porcelain
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
+      - run: pnpm build
+
+  windows:
+    name: Windows (install, TS tests, Go unit tests)
+    if: github.event_name != 'schedule'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: services/api/go.mod
+          cache: true
+          cache-dependency-path: |
+            services/api/go.sum
+            services/api/tools/go.sum
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: go -C services/api test ./...
+      - run: pnpm test:hooks
+
+  nightly:
+    name: Nightly slow tests
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @retrograde/engine test:slow
