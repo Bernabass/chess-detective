@@ -264,6 +264,8 @@ export function analyzePosition(p: Position, opts?: AnalyzeOptions): AnalysisRep
 
 Soundness rule: `illegal` only when the contradiction is certain. Never claim `legal` without a proof game. `deduction` findings are true facts about the position's history; they become the Lab's "detective notes".
 
+**Deciding `legal`** (decided 2026-10-22). When no illegal finding exists, `analyzePosition` makes a quick proof attempt: `shortestProofGame` (§6) from the lower bound upward, honouring the FEN's claims (every stated castling right must survive to the end, and a stated en passant square must be the final one). Options `proofMaxPlies` (default 10), `proofTimeLimitMs` (default 750, separate from the last-move budget) and `proofNodeLimit` (default 1,000,000); `proofMaxPlies: 0` disables it. A found proof is replayed as a self-check and the verdict is `legal` with that (shortest) proof. Otherwise the verdict stays `undecided`: reason `search-limit` if the proof attempt or the last-move search was cut short, else `no-contradiction-found` (also when the lower bound alone exceeds `proofMaxPlies`). No proof within N plies never makes a position illegal.
+
 ### 5.2 Static rules
 
 Each rule has a `RuleId`, a test that triggers it and a test that it stays silent on legal positions. Message templates are examples; keep them that clear.
@@ -371,6 +373,9 @@ interface SolveOptions {
   nodeLimit?: number;
   shouldStop?: () => boolean;
   onProgress?: (p: { nodes: number; elapsedMs: number }) => void;
+  castling?: string;             // rights (subset of "KQkq") that must still hold at the end; default none
+  enPassant?: string;            // en passant square the final position must have; default not required
+  ttBits?: number;               // transposition table size 2^ttBits entries (default 20, about 13 MB)
 }
 interface SolveResult {
   status: 'complete' | 'limit' | 'aborted';
@@ -381,7 +386,17 @@ interface SolveResult {
 }
 export function solveProofGame(target: string, opts: SolveOptions): SolveResult;
 export function shortestProofGame(target: string, maxPlies: number, opts?: Omit<SolveOptions, 'plies' | 'mode'>): ShortestResult;
+interface ShortestResult {
+  status: 'complete' | 'limit' | 'aborted';
+  plies: number | null;          // length of the proof found
+  solution: string[] | null;     // complete + solution: a proven shortest proof game; complete + null: none up to maxPlies
+  nodes: number;
+  elapsedMs: number;
+  searched: number[];            // ply counts searched completely without a solution
+}
 ```
+
+`count` is exact when the status is `complete` and the count is below `cap`; otherwise it's a lower bound. `castling` and `enPassant` serve `analyzePosition` (§5.1); daily puzzles compare the target key only. Repetition and the 50-move rule are ignored.
 
 `shortestProofGame` tries N = the smallest value with the right parity (target side to move fixes N's parity) that is ≥ the lower bound from the start position, then N + 2, and so on up to `maxPlies`.
 
@@ -392,19 +407,20 @@ After k plies, r = N − k plies remain. If White is to move, White has `ceil(r/
 ### 6.3 Lower bound h(P, T), computed per side
 
 For side S, h_S is the maximum of:
-1. **Displacement cost.** For each piece type, a min-cost matching between S's current pieces and S's target pieces of that type. Use empty-board distances, which never overestimate:
+1. **Displacement cost.** For each piece type (light- and dark-squared bishops count as separate types), a min-cost matching between S's current pieces and S's target pieces of that type. Use empty-board distances, which never overestimate:
    - King: Chebyshev distance.
    - Knight: precomputed BFS table.
    - Bishop: 0 same square, 1 same diagonal, 2 same square color, ∞ otherwise.
    - Rook / Queen: 0, 1 or 2.
    - Pawn (White), with `dr` = ranks to advance and `df` = files to change: ∞ if `dr < 0` or `|df| > dr`. Otherwise every move advances exactly one rank except a double push, which needs two straight ranks at the start. So the cost is `dr − 1` if the pawn is on rank 2 and `dr − |df| ≥ 2`, else `dr`. (A tempting shortcut that only allows the double push when `df == 0` overestimates, e.g. e2→f5 via e4 and exf5 is 2 moves, not 3.) Mirror for Black.
-   - Extra current pieces (to be captured) cost S nothing. Target pieces with no match of their type (promotions) cost 0.
+   - Extra current pieces (to be captured) cost S nothing.
+   - **Promotions** (decided 2026-10-22; corrects the original wording). Let E = (current pawns of S) − (target pawns of S): the most pawns S can still promote. Any non-pawn target piece may be explained as a promoted pawn at cost 0 instead of being matched to a current piece, at most E times **per type**. Forcing a match would overestimate: with a white knight far from the target knight's square and a white pawn on the 7th rank that can promote there in one move (the old knight being captured later, which costs White nothing), the true cost is 1 but a forced knight match says 4. Allowing E per type is a relaxation of the real limit (E in total), so the bound stays admissible. The pawn promotions themselves cost nothing here, because extra current pawns are free.
 2. **Captures S must make**: (opponent pieces now) − (opponent pieces in target). Each capture is a separate move of S.
 
 Feasibility pruning (return "impossible"):
 - Target piece count of S > current piece count of S (pieces never come back).
 - Target pawns of S can't be perfectly matched to current pawns of S.
-- Unmatched target non-pawn pieces of S > current pawns of S − target pawns of S (not enough pawns left to promote).
+- Unmatched target non-pawn pieces of S > current pawns of S − target pawns of S (not enough pawns left to promote), where "unmatched" counts, per type, the target pieces beyond the current pieces of that type.
 
 **The castling trap.** Castling moves king and rook in one move. Naive distances make the bound overestimate, which silently breaks the search. While S still has a castling right:
 - King cost = min(normal distance, 1 + distance from the castled king square to the target).
@@ -412,13 +428,13 @@ Feasibility pruning (return "impossible"):
 
 The castling move then counts once (through the king), so the bound stays admissible.
 
-**Admissibility property test (mandatory).** Play a seeded random game of N plies to get T. For every prefix position Pᵢ, h_White(Pᵢ, T) ≤ White's remaining moves and h_Black(Pᵢ, T) ≤ Black's remaining moves. Run it over thousands of random games, including games with castling, promotions and en passant. Any change to h must keep it green.
+**Admissibility property test (mandatory).** Play a seeded random game of N plies to get T. For every prefix position Pᵢ, h_White(Pᵢ, T) ≤ White's remaining moves and h_Black(Pᵢ, T) ≤ Black's remaining moves. Run it over thousands of random games, including games with castling, promotions and en passant, and games where a side promotes to a piece type it already has and the original piece is captured later (the pattern that breaks a forced matching); the test asserts each of these occurs. Any change to h must keep it green.
 
 ### 6.4 Search
 
 - Depth-first search with the exact remaining ply count; prune with §6.2/§6.3; when r = 0, compare target keys.
 - In find modes, order moves by decreasing bound improvement.
-- **Memoized counting.** A transposition table keyed by (Zobrist key including castling and en passant, remaining plies) stores the solution count from that node, saturated at `cap`. This turns repeated subtrees into a lookup and makes uniqueness checks (`cap = 2`) cheap. Use a fixed-size table with an always-replace or depth-preferred scheme; store the full key to rule out collisions. In find modes the same table records dead ends (count 0) so they're never searched twice. Never store a result for a subtree that was cut short by a limit or abort.
+- **Memoized counting.** A transposition table keyed by (Zobrist key including castling and en passant, remaining plies) stores the solution count from that node, saturated at `cap`. (The Zobrist key includes the en passant file only when a capture is possible, §4.5; positions differing only by an unusable en passant square have identical futures, so sharing an entry is correct.) This turns repeated subtrees into a lookup and makes uniqueness checks (`cap = 2`) cheap. Use a fixed-size table with an always-replace or depth-preferred scheme; store the full key to rule out collisions. In find modes the same table records dead ends (count 0) so they're never searched twice. Never store a result for a subtree that was cut short by a limit or abort.
 - Progress callback about every 50,000 nodes; check `shouldStop`, `timeLimitMs` and `nodeLimit` at the same interval.
 
 ### 6.5 Tests

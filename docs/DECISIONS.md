@@ -147,3 +147,15 @@ Append-only. Each entry: date, context, decision, consequences. Newest at the bo
   - An engine test fails if the file is stale or was produced by another engine version.
 - **Seeds in property tests.** The completeness and soundness tests iterate fixed seed ranges directly (each seed is a whole random game, so fast-check's shrinking would only replay games), and every failure message starts with its seed. The analyzer-claims property (random-game positions are never called illegal, and a forced last move names the move played) uses fast-check with a fixed seed, as `.claude/rules/engine.md` asks.
 - **Forced moves that may be en passant.** When a forced last move could be en passant *or* an ordinary capture, the message says "capturing a black pawn (possibly en passant), knight, …". It never claims en passant unless that is the only possibility.
+
+## 2026-10-22: Phase 3 solver decisions
+- Context: Writing the Phase 3 plan. The owner approved all of the following; SPEC §5.1, §6.1, §6.3 and §6.4 hold the settled versions.
+- Decision:
+  1. **Promotion-aware lower bound.** A non-pawn target piece may be explained as a promoted pawn at cost 0, at most E = (current pawns − target pawns) times per type. A forced per-type matching overestimates: a far-away knight versus a pawn one move from promoting on the target square, with the old knight captured later. A dedicated test pins down that counterexample. The admissibility property test asserts that its games include a promotion to a piece type the side already had, with the original piece captured later.
+  2. **Light- and dark-squared bishops are separate types in the matching**, since a bishop never changes square colour.
+  3. **Claim options.** `castling` (rights that must survive to the end) and `enPassant` (the final en passant square) serve `analyzePosition`'s proofs. Daily puzzles compare the target key only. A lost required right prunes immediately.
+  4. **`analyzePosition` decides "legal" only with a proof**, from a quick `shortestProofGame` attempt (defaults: 10 plies, 750 ms, 1,000,000 nodes). The proof is replayed as a self-check. Otherwise the verdict stays `undecided` (`search-limit` if anything was cut short, else `no-contradiction-found`).
+  5. **Types and semantics.** `ShortestResult` is `{ status, plies, solution, nodes, elapsedMs, searched }`. `count` is exact only when the status is `complete` and the count is below `cap`. Repetition and the 50-move rule are ignored.
+  6. **Performance.** The pawn part of the bound is cached by pawn configuration (most moves don't move a pawn); other types use small exact enumerations or a bitmask DP. The transposition table is a fixed-size typed-array table keyed by the full 64-bit Zobrist hash plus remaining plies, 2^20 entries by default (`ttBits`).
+  7. **Test budget.** `pnpm check` stays under about two minutes; heavy checks (100,000-game admissibility, N = 5 brute force, 20 targets per N) run in the slow suite.
+- Consequences: The bound stays admissible with promotions. Legal Lab positions within 10 plies get a proof and verdict `legal`.
