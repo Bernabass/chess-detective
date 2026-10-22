@@ -88,3 +88,35 @@ export function solveRandomTargets(firstSeed: number, plies: number, games: numb
 export function ucis(p: Position): string[] {
   return legalMoves(p).map(moveToUci);
 }
+
+export interface DiagramStats {
+  plies: number;
+  /** Distinct target keys reachable in exactly `plies` plies. */
+  all: number;
+  /** Target keys reached by exactly one game of `plies` plies. */
+  uniquelyRealizable: number;
+  /** ... and not reachable at all in fewer plies (plies - 2, plies - 4, ...): puzzle-style. */
+  uniqueShortest: number;
+}
+
+/** Brute-force statistics for every ply count 0..maxPlies (cf. wismuth.com diagram table). */
+export function diagramStatistics(maxPlies: number): DiagramStats[] {
+  const maps: Map<string, number>[] = [];
+  const stats: DiagramStats[] = [];
+  for (let plies = 0; plies <= maxPlies; plies++) {
+    const counts =
+      plies === 0 ? new Map([[targetKey(initialPosition()), 1]]) : bruteForceCounts(plies);
+    maps.push(counts);
+    let unique = 0;
+    let uniqueShortest = 0;
+    for (const [key, n] of counts) {
+      if (n !== 1) continue;
+      unique++;
+      let shorter = false;
+      for (let k = plies - 2; k >= 0 && !shorter; k -= 2) shorter = maps[k]?.has(key) === true;
+      if (!shorter) uniqueShortest++;
+    }
+    stats.push({ plies, all: counts.size, uniquelyRealizable: unique, uniqueShortest });
+  }
+  return stats;
+}

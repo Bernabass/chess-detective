@@ -6,7 +6,7 @@ import { isAttacked, findCheckers } from './core/attacks';
 import type { Position } from './core/position';
 
 /** Engine version, recorded with every generated puzzle. Keep in sync with package.json. */
-export const ENGINE_VERSION = '0.3.0';
+export const ENGINE_VERSION = '0.4.0';
 
 export type Color = 'w' | 'b';
 
@@ -60,4 +60,4 @@ export { analyzePosition } from './retro/analyze';
 export type { SolveOptions, SolveResult } from './solver/search';
 export { solveProofGame } from './solver/search';
 export type { ShortestOptions, ShortestResult } from './solver/shortest';
-export { shortestProofGame } from './solver/shortest';
+export { minimumPlies, shortestProofGame } from './solver/shortest';
