@@ -36,9 +36,16 @@ describe('curated retro fixtures (ARCHITECTURE.md §5.5)', () => {
     } else if (f.expected === 'undecided') {
       expect(report.verdict.kind).toBe('undecided');
     } else {
-      // Without a solver, "legal" positions must not be called illegal. The solver tightens
-      // this to verdict "legal" with a proof.
-      expect(report.verdict.kind).not.toBe('illegal');
+      // "legal" needs a proof game (ARCHITECTURE.md §5.1): it must reach the position and keep its claims.
+      expect(report.verdict.kind).toBe('legal');
+      if (report.verdict.kind === 'legal') {
+        const r = replay(report.verdict.proof);
+        if (!r.ok) throw new Error('analyzer proof must replay');
+        expect(targetKey(r.value)).toBe(targetKey(p));
+        expect(r.value.castling & p.castling).toBe(p.castling);
+        if (p.epSquare >= 0) expect(r.value.epSquare).toBe(p.epSquare);
+        if (f.proof !== undefined) expect(report.verdict.proof.length).toBe(f.proof.length);
+      }
     }
 
     for (const rule of f.rules) expect(rules).toContain(rule as RuleId);
