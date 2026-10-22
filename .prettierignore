@@ -5,6 +5,7 @@ LICENSE
 # Prose is formatted by hand.
 **/*.md
 # Generated code.
+fixtures/
 **/*.gen.ts
 apps/web/src/api/schema.d.ts
 services/api/internal/**/*.gen.go
