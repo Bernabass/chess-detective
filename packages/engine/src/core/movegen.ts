@@ -67,31 +67,33 @@ export function generatePseudoMoves(p: Position, out: Int32Array): number {
       sq += 7; // skip the padding columns of this rank
       continue;
     }
-    const piece = b[sq]! * sign;
-    if (piece <= 0) continue;
-
-    switch (piece) {
-      case PAWN:
-        n = pawnMoves(p, sq, us, out, n);
-        break;
-      case KNIGHT:
-        n = stepMoves(b, sq, sign, KNIGHT_STEPS, out, n);
-        break;
-      case KING:
-        n = stepMoves(b, sq, sign, KING_STEPS, out, n);
-        break;
-      case BISHOP:
-        n = slideMoves(b, sq, sign, BISHOP_STEPS, out, n);
-        break;
-      case ROOK:
-        n = slideMoves(b, sq, sign, ROOK_STEPS, out, n);
-        break;
-      default: // QUEEN
-        n = slideMoves(b, sq, sign, BISHOP_STEPS, out, n);
-        n = slideMoves(b, sq, sign, ROOK_STEPS, out, n);
-    }
+    if (b[sq]! * sign > 0) n = pieceMoves(p, sq, out, n);
   }
   return castlingMoves(p, us, out, n);
+}
+
+/** Pseudo-legal moves (castling excluded) of the side to move's piece on `from`. */
+function pieceMoves(p: Position, from: number, out: Int32Array, n: number): number {
+  const b = p.board;
+  const us = p.turn;
+  const sign = us === WHITE ? 1 : -1;
+  switch (b[from]! * sign) {
+    case PAWN:
+      return pawnMoves(p, from, us, out, n);
+    case KNIGHT:
+      return stepMoves(b, from, sign, KNIGHT_STEPS, out, n);
+    case KING:
+      return stepMoves(b, from, sign, KING_STEPS, out, n);
+    case BISHOP:
+      return slideMoves(b, from, sign, BISHOP_STEPS, out, n);
+    case ROOK:
+      return slideMoves(b, from, sign, ROOK_STEPS, out, n);
+    case QUEEN:
+      n = slideMoves(b, from, sign, BISHOP_STEPS, out, n);
+      return slideMoves(b, from, sign, ROOK_STEPS, out, n);
+    default:
+      return n; // empty or an enemy piece
+  }
 }
 
 function stepMoves(
@@ -283,6 +285,32 @@ export function generateLegalMoves(p: Position, out: Int32Array): number {
     if (isLegal(p, m, king, checked)) out[n++] = m;
   }
   return n;
+}
+
+/**
+ * The move from `from` to `to` (with `promotion`, 0 for none) if the move generator produces
+ * it in this position, pseudo-legally, or -1. Generates only the moves of the piece on `from`
+ * (plus castling for a king on its home square). The caller still has to check that the move
+ * doesn't leave its own king attacked. Used to confirm retractions by forward generation.
+ */
+export function findPseudoMove(
+  p: Position,
+  from: number,
+  to: number,
+  promotion: number,
+  buffer: Int32Array,
+): Move {
+  const us = p.turn;
+  let count = pieceMoves(p, from, buffer, 0);
+  if (p.board[from] === (us === WHITE ? KING : -KING) && from === (us === WHITE ? E1 : E8)) {
+    count = castlingMoves(p, us, buffer, count);
+  }
+  for (let i = 0; i < count; i++) {
+    const m = buffer[i]!;
+    if ((m & 0x7f) === from && ((m >>> 7) & 0x7f) === to && ((m >>> 14) & 7) === promotion)
+      return m;
+  }
+  return -1;
 }
 
 /**

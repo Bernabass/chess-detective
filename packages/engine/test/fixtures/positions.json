@@ -1,0 +1,241 @@
+[
+  {
+    "fen": "k7/8/8/8/8/8/8/K6P w - - 0 1",
+    "expected": "illegal",
+    "rules": ["PAWN_ON_BACK_RANK"],
+    "comment": "SPEC §5.5. A white pawn on h1 is on its own first rank, where no pawn can ever stand."
+  },
+  {
+    "fen": "4k3/4R3/8/8/8/8/8/4K3 w - - 0 1",
+    "expected": "illegal",
+    "rules": ["OPPONENT_IN_CHECK"],
+    "comment": "SPEC §5.5. White to move, yet the black king is attacked by the rook on e7: Black's last move would have left its own king in check."
+  },
+  {
+    "fen": "4k3/8/3N4/1B6/8/8/8/4R2K b - - 0 1",
+    "expected": "illegal",
+    "rules": ["TOO_MANY_CHECKERS"],
+    "comment": "SPEC §5.5. Rook e1, knight d6 and bishop b5 all check e8; one move can uncover at most a double check."
+  },
+  {
+    "fen": "4k3/8/8/8/8/8/PPPPPPPP/QQ2K3 w - - 0 1",
+    "expected": "illegal",
+    "rules": ["PROMOTION_EXCESS"],
+    "comment": "SPEC §5.5. A second queen must be a promoted pawn, but all 8 white pawns are still on the board."
+  },
+  {
+    "fen": "rnbqkbnr/pppppppp/8/8/8/2P5/P1PPPPPP/RNBQKBNR b KQkq - 0 1",
+    "expected": "illegal",
+    "rules": ["PAWN_CAPTURES_EXCEED_MISSING"],
+    "comment": "SPEC §5.5. With c2 at home, the c3 pawn must be the b-pawn after a capture, but Black has lost nothing."
+  },
+  {
+    "fen": "4k3/8/8/8/8/8/8/5K1R w K - 0 1",
+    "expected": "illegal",
+    "rules": ["CASTLING_RIGHTS_INCONSISTENT"],
+    "comment": "SPEC §5.5. Kingside castling is claimed but the white king stands on f1, not e1."
+  },
+  {
+    "fen": "4k3/8/8/8/8/8/8/4K3 w - e6 0 1",
+    "expected": "illegal",
+    "rules": ["EN_PASSANT_INCONSISTENT"],
+    "comment": "SPEC §5.5. e6 as the en passant square means Black just played e7-e5, but there is no black pawn on e5."
+  },
+  {
+    "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+    "expected": "legal",
+    "rules": [],
+    "proof": ["e2e4", "e7e5"],
+    "lastMoves": ["e7e5"],
+    "comment": "SPEC §5.5. 1.e4 e5. The FEN writes '-' for en passant, which means 'not stated', so ...e7-e5 must still be a possible last move."
+  },
+  {
+    "fen": "8/8/8/8/8/8/8/K6k w - - 0 1",
+    "expected": "undecided",
+    "rules": [],
+    "comment": "SPEC §5.5. Bare kings are reachable, but only by a long proof game that removes 30 pieces; static rules and a 3-move retraction search find no contradiction."
+  },
+  {
+    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1",
+    "expected": "undecided",
+    "rules": [],
+    "comment": "SPEC §5.5. Actually illegal by parity: with every pawn home only knights (and a rook into a vacated knight square) can move, and every trip back home takes an even number of moves, so White can't be one move ahead. Proving that is stretch rule PARITY (§5.6)."
+  },
+  {
+    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "expected": "legal",
+    "rules": [],
+    "proof": [],
+    "comment": "The initial position: legal with the empty proof game."
+  },
+  {
+    "fen": "KK6/8/8/8/8/8/8/k7 w - - 0 1",
+    "expected": "illegal",
+    "rules": ["KING_COUNT"],
+    "comment": "Two white kings; each side has exactly one, and kings are never promoted."
+  },
+  {
+    "fen": "8/8/8/8/8/8/8/k7 w - - 0 1",
+    "expected": "illegal",
+    "rules": ["KING_COUNT"],
+    "comment": "White has no king; kings are never captured."
+  },
+  {
+    "fen": "rnbqkbnr/pppppppp/n7/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "expected": "illegal",
+    "rules": ["TOO_MANY_PIECES", "PROMOTION_EXCESS"],
+    "comment": "A third black knight makes 17 black pieces; it would also have to be a promoted pawn while all 8 black pawns remain."
+  },
+  {
+    "fen": "k7/8/8/8/8/P7/PPPPPPPP/K7 w - - 0 1",
+    "expected": "illegal",
+    "rules": ["TOO_MANY_PAWNS"],
+    "comment": "Nine white pawns; pawns are never created."
+  },
+  {
+    "fen": "k7/8/8/8/8/8/PPPPPPPP/K1B1B3 w - - 0 1",
+    "expected": "illegal",
+    "rules": ["PROMOTION_EXCESS"],
+    "comment": "c1 and e1 are both dark squares, so one of the two dark-squared bishops is promoted, but all 8 white pawns are still here."
+  },
+  {
+    "fen": "k7/8/8/8/8/PP6/PP6/K7 w - - 0 1",
+    "expected": "illegal",
+    "rules": ["PAWN_STRUCTURE_IMPOSSIBLE"],
+    "comment": "a2, b2 and a3 can only have started on the a- and b-files: three pawns, two files (Hall's condition fails)."
+  },
+  {
+    "fen": "k7/pp6/pp6/8/8/8/8/K7 w - - 0 1",
+    "expected": "illegal",
+    "rules": ["PAWN_STRUCTURE_IMPOSSIBLE"],
+    "comment": "Black's version: a7, b7 and a6 can only have started on the a- and b-files."
+  },
+  {
+    "fen": "r3k3/8/8/8/8/8/8/4K3 w k - 0 1",
+    "expected": "illegal",
+    "rules": ["CASTLING_RIGHTS_INCONSISTENT"],
+    "comment": "Black kingside castling is claimed but there is no black rook on h8."
+  },
+  {
+    "fen": "4k3/4p3/8/4p3/8/8/8/4K3 w - e6 0 1",
+    "expected": "illegal",
+    "rules": ["EN_PASSANT_INCONSISTENT"],
+    "comment": "e6 means Black just played e7-e5, but e7 is occupied."
+  },
+  {
+    "fen": "4k3/8/8/8/4P3/8/8/4K3 w - e3 0 1",
+    "expected": "illegal",
+    "rules": ["EN_PASSANT_INCONSISTENT"],
+    "comment": "e3 means White just double-pushed, but it is White to move."
+  },
+  {
+    "fen": "7k/8/8/8/8/8/PPP5/KB6 b - - 0 1",
+    "expected": "illegal",
+    "rules": ["NO_POSSIBLE_LAST_MOVE"],
+    "comment": "White just moved, but the king on a1 and bishop on b1 are walled in by unmoved pawns on a2, b2 and c2, which never moved themselves."
+  },
+  {
+    "fen": "r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1",
+    "expected": "illegal",
+    "rules": ["NO_POSSIBLE_LAST_MOVE"],
+    "comment": "White just moved, but the stated rights KQ say White's king and rooks never moved, and White has nothing else."
+  },
+  {
+    "fen": "r3k2r/8/8/8/8/8/8/R3K2R b kq - 0 1",
+    "expected": "undecided",
+    "rules": [],
+    "absent": ["NO_POSSIBLE_LAST_MOVE"],
+    "comment": "Same board without White's rights: the white king or a rook may have moved last (Kd1-e1, Rh2-h1, ...)."
+  },
+  {
+    "fen": "r3k2r/pppp1ppp/4p3/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1",
+    "expected": "illegal",
+    "rules": ["NO_POSSIBLE_HISTORY"],
+    "depth": 3,
+    "comment": "Black's only last move is ...e7-e6 (the king and rooks are frozen by kq, the other pawns are home). Before it White must have moved, but KQ freezes White's king and rooks and every white pawn is home."
+  },
+  {
+    "fen": "r3k2r/pppp1ppp/4p3/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1",
+    "expected": "undecided",
+    "rules": ["LAST_MOVE_FORCED"],
+    "depth": 1,
+    "lastMoves": ["e7e6"],
+    "comment": "The same position looked at only one move deep: ...e7-e6 is forced, and the dead end behind it isn't seen yet."
+  },
+  {
+    "fen": "6k1/4Kppp/8/8/8/8/8/8 w - - 0 1",
+    "expected": "undecided",
+    "rules": ["LAST_MOVE_FORCED"],
+    "lastMoves": ["h8g8"],
+    "comment": "Black's only piece that can have moved is the king, and from f8 it would have stood next to the white king on e7, so it came from h8 (possibly capturing on g8)."
+  },
+  {
+    "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+    "expected": "legal",
+    "rules": ["LAST_MOVE_FORCED"],
+    "proof": ["e2e4"],
+    "lastMoves": ["e2e4"],
+    "comment": "1.e4 with the en passant square stated: the only possible last move is the double push e2-e4."
+  },
+  {
+    "fen": "rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2",
+    "expected": "legal",
+    "rules": ["CAPTURES_REQUIRED"],
+    "proof": ["e2e4", "d7d5", "e4d5"],
+    "lastMoves": ["e4d5"],
+    "comment": "1.e4 d5 2.exd5: with d2 still at home, the d5 pawn is the e-pawn after a capture."
+  },
+  {
+    "fen": "r1bqkbnr/pppppppp/2n5/8/8/5NP1/PPPPPPBP/RNBQ1RK1 b kq - 4 4",
+    "expected": "legal",
+    "rules": ["CASTLING_LOST"],
+    "proof": ["g1f3", "b8c6", "g2g3", "c6b8", "f1g2", "b8c6", "e1g1"],
+    "lastMoves": ["e1g1"],
+    "comment": "White has castled; un-castling e1-g1 is a possible last move. Black's knight went c6, b8, c6 to make the move count work."
+  },
+  {
+    "fen": "4k3/8/8/8/8/8/8/QQ2K3 w - - 0 1",
+    "expected": "undecided",
+    "rules": ["PROMOTED_PIECE_REQUIRED"],
+    "comment": "Two white queens and no pawns: one queen is a promoted pawn, which is fine because pawns are missing."
+  },
+  {
+    "fen": "r3k2r/8/8/8/8/8/8/R4K1R b kq - 0 1",
+    "expected": "undecided",
+    "rules": ["CASTLING_LOST"],
+    "comment": "The white king has left e1, so White can no longer castle on either side; it may have made the last move."
+  },
+  {
+    "fen": "r3k2r/8/8/8/8/8/8/R4K1R w kq - 0 1",
+    "expected": "illegal",
+    "rules": ["NO_POSSIBLE_LAST_MOVE", "CASTLING_LOST"],
+    "comment": "Same board with White to move: Black just moved, but the stated rights kq freeze Black's king and both rooks, and Black has nothing else."
+  },
+  {
+    "fen": "Q3k3/8/8/8/8/8/8/4K3 b - - 0 1",
+    "expected": "undecided",
+    "rules": [],
+    "lastMoves": ["a7a8q", "b7a8q"],
+    "comment": "The checking queen on a8 may have just promoted, from a7 or capturing from b7."
+  },
+  {
+    "fen": "4k3/8/3P4/8/8/8/8/4K3 b - - 0 1",
+    "expected": "undecided",
+    "rules": [],
+    "lastMoves": ["e5d6", "c5d6", "d5d6"],
+    "comment": "The d6 pawn may have just captured en passant from c5 or e5 (a black pawn had just played d7-d5), or simply pushed from d5."
+  },
+  {
+    "fen": "4r2k/8/8/8/1b6/8/R7/4K3 w - - 0 1",
+    "expected": "undecided",
+    "rules": [],
+    "absent": ["TOO_MANY_CHECKERS"],
+    "comment": "A double check is possible: for example the bishop came from e7 (via d6 and c5), uncovering the rook on e8."
+  },
+  {
+    "fen": "4k3/8/8/8/8/8/8/4K3 b - - 0 1",
+    "expected": "undecided",
+    "rules": [],
+    "comment": "Bare kings with Black to move: the white king made the last move, from any free square around e1."
+  }
+]
