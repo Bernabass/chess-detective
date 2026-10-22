@@ -9,7 +9,7 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 | 0 | Foundations | done (2026-10-22) | `phase-0` |
 | 1 | Engine core | done (2026-10-22) | `phase-1` |
 | 2 | Retro analysis | done (2026-10-22) | `phase-2` |
-| 3 | Proof-game solver | not started | |
+| 3 | Proof-game solver | done (2026-10-22) | `phase-3` |
 | 4 | Puzzle generator | not started | |
 | 5 | Web shell and Lab | not started | |
 | 6 | API core | not started | |
@@ -22,12 +22,73 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 | Metric | Value | Date |
 |---|---|---|
 | Perft nodes/second (Node, start position depth 5) | ≈4.0M nodes/s (median of 3 runs: 3.4M, 4.0M, 4.2M); Kiwipete depth 4: 5.4M. Node 24.13, owner's Windows 10 machine, `pnpm --filter @retrograde/engine perft 5` | 2026-10-22 |
-| Solver median / p95 at N = 6, 8, 10 | | |
+| Solver median / p95 at N = 6, 8, 10 | find-one: 2 / 6 ms, 2 / 11 ms, 4 / 191 ms. count (cap 2): 2 / 5 ms, 2 / 33 ms, 2 / 167 ms (worst 436 ms). Median nodes 7–14. 50 targets of uniformly random games per N, `pnpm --filter @retrograde/engine bench` | 2026-10-22 |
 | Generator acceptance rate and time per puzzle by N | | |
 | Main-thread JS bundle (gzipped) | | |
 | Lighthouse accessibility, /daily and /lab | | |
 
 ## Phase log
+
+### Phase 3: Proof-game solver (2026-10-22)
+
+**Done, by acceptance criterion**
+- **Admissibility over ≥ 5,000 games fast / 100,000 slow, with castling, promotion and en passant.**
+  - The lower bound (`packages/engine/src/solver/bound.ts`) implements §6.3 with the owner-approved correction: a non-pawn target piece may be a promoted pawn at cost 0, at most E times per kind.
+  - It also has the castling trap, light/dark bishops as separate kinds, and the feasibility rules.
+  - The property test (`test/solver/bound-properties.test.ts`, slow: 4 × 25,000) checks every position of every game. It asserts that castling, en passant and promotion games occur, and so does the pattern that breaks a forced matching: a promotion to a kind the side already has, with the original captured later (116 such games per 1,000).
+  - The dedicated counterexample test (1.g8=N Rxa1) is in `bound.test.ts`.
+- **Brute-force cross-check N ≤ 4 fast, N = 5 slow.**
+  - Every target at N = 1–3 and 500 sampled at N = 4 (197,281 games) match the solver's counts exactly; so do 500 sampled at N = 5 (4,865,609 games).
+  - Since the self-review, the fast suite also checks targets with zero 4-ply games and checks that find-all collects exactly the brute-force number of distinct games.
+- **Every random-game target up to N = 10 solved `complete`.** 2 per N in the fast suite, 20 per N in the slow suite. Each proof replays to the target.
+- **Bench recorded; median at N = 8 within target.** The median at N = 8 is 2 ms against the ~5 s target (see Measurements). The solver: depth-first search with exact remaining plies, per-side budgets, ordering by bound in find modes, and a fixed-size transposition table for memoized counting.
+- **`analyzePosition` returns `legal` with a proof for the §5.5 fixture.**
+  - Every "legal" fixture now gets verdict `legal` with a shortest proof that replays and keeps the stated castling rights and en passant square. That includes 1.e4 e5 written with `-`, 1.e4 with e3 stated, 1.e4 d5 2.exd5, and the castled position (7 plies).
+  - Quick proof attempt: 10 plies / 750 ms / 1,000,000 nodes by default; otherwise `undecided` with a reason (SPEC §5.1).
+- Also: `solveProofGame` and `shortestProofGame` are public, with `castling`/`enPassant` claim options and `ttBits`; `pnpm --filter @retrograde/engine bench`; engine version 0.3.0. The replay vectors were regenerated, and only their `engineVersion` changed.
+
+**Evidence**
+- `pnpm check`: all green, about 102 s with warm caches (138 s on a cold first run after a restart). Engine unit tests: 16 files, 261 tests, statements 93.91%. Engine property tests: 9 files, 35 tests (about 59 s). Web 3/3, generator 1/1, golangci-lint `0 issues`, Go tests ok, hook test passed.
+- `test:slow` (1,649 s): 29/29 passed. That covers all perft rows (including start d6 = 119,060,324), 100,000-game admissibility, N = 5 brute force, 20 random targets per N up to 10, the 50,000-node progress callback, 50,000-position retraction completeness/soundness, and analyzer claims on 3,000+ positions (now including proof attempts, about 26 min).
+- **Self-review** (separate review agent): no admissibility or count bugs. It independently verified:
+  - pawn distances against BFS;
+  - 200,000 random pawn sets against a brute-force matching;
+  - 30,000 extra stress games;
+  - 1,805 search-versus-brute-force checks (en passant and castling requirements, find-all, zero targets, shared table);
+  - that the admissibility test fails on 27 games when the bound is deliberately broken back to a forced matching.
+
+  Fixed:
+  - Limits were first checked at node 4,096, so a 750 ms budget measured 813 ms. Now they're checked on the first node and every 256 nodes, `shortestProofGame` stops before another length once its budget is spent, and a test holds a 100 ms budget to under 400 ms.
+  - A 13 MB table was allocated on every Lab analysis; it's now lazy.
+  - Table counts could wrap negative; they now saturate.
+  - Comments and DECISIONS wording; SPEC now says `shortestProofGame` takes no `cap`.
+
+**Known issues / follow-ups**
+- On searches that prune poorly (12 plies back to the start position), count mode runs at only about 6,000 nodes/s, because it evaluates the bound for every child. Real puzzle targets prune so hard that this doesn't matter (median 9–14 nodes). If the Phase 4 generator's "shortest" checks at N − 2, N − 4, … turn out slow, an incremental bound is the first optimization to try.
+- The promotion allowance (cost 0, E per kind) is deliberately loose. It's admissible, but a tighter promotion cost (the pawn's distance to the last rank) could speed up targets with promotions.
+- The nightly slow suite now takes about 27 minutes, dominated by the analyzer-claims property.
+
+**How to try it** (VS Code terminal, PowerShell, in the project folder)
+
+1. Run the engine's fast tests:
+   ```powershell
+   pnpm --filter @retrograde/engine test
+   ```
+   Expect `Tests  261 passed` with `Statements : 93.91%`, then `Tests  35 passed`.
+2. Benchmark the solver:
+   ```powershell
+   pnpm --filter @retrograde/engine bench
+   ```
+   You should see six lines (N = 6, 8, 10 × find-one / count). Medians are a few milliseconds and the median node counts are in the teens.
+3. Find a shortest proof game and analyze a legal position:
+   ```powershell
+   cd packages/engine
+   npx tsx -e "import { shortestProofGame, analyzePosition, parseFen } from './src/index'; console.log(shortestProofGame('r1bqkbnr/pppppppp/2n5/8/8/5NP1/PPPPPPBP/RNBQ1RK1 b', 12, { castling: 'kq' })); const p = parseFen('rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2'); if (p.ok) console.log(analyzePosition(p.value).verdict);"
+   cd ../..
+   ```
+   The first result has `plies: 7` and the proof `g1f3 b8c6 g2g3 c6b8 f1g2 b8c6 e1g1`. The second has `kind: 'legal'` with the proof `e2e4 d7d5 e4d5`.
+4. Optional, about 27 minutes: `pnpm --filter @retrograde/engine test:slow` should end with `Tests  29 passed`.
+5. `pnpm check` should pass.
 
 ### Phase 2: Retro analysis (2026-10-22)
 

@@ -385,7 +385,7 @@ interface SolveResult {
   elapsedMs: number;
 }
 export function solveProofGame(target: string, opts: SolveOptions): SolveResult;
-export function shortestProofGame(target: string, maxPlies: number, opts?: Omit<SolveOptions, 'plies' | 'mode'>): ShortestResult;
+export function shortestProofGame(target: string, maxPlies: number, opts?: Omit<SolveOptions, 'plies' | 'mode' | 'cap'>): ShortestResult;
 interface ShortestResult {
   status: 'complete' | 'limit' | 'aborted';
   plies: number | null;          // length of the proof found
