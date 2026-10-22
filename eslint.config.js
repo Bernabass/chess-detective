@@ -22,10 +22,13 @@ export default tseslint.config(
     },
   },
   {
-    // The engine runs in browsers, workers and Node: no platform APIs.
     files: ['packages/engine/src/**/*.ts'],
     rules: {
+      // The engine runs in browsers, workers and Node: no platform APIs.
       'no-restricted-imports': ['error', { patterns: ['node:*', 'fs', 'path', 'os'] }],
+      // Hot-path typed-array reads are bounds-checked by 0x88 arithmetic, so `board[sq]!` is
+      // allowed here instead of a runtime check (see DECISIONS.md, Phase 1).
+      '@typescript-eslint/no-non-null-assertion': 'off',
     },
   },
   {
