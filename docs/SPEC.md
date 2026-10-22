@@ -198,6 +198,8 @@ Correctness first, proved by perft. Then speed.
 
 Keys from a fixed-seed PRNG (e.g. a small xorshift or splitmix32 implementation in `util/rng.ts`), so hashes are identical on every machine and run. Two 32-bit halves; no BigInt.
 
+The hash covers piece placement, side to move, castling rights and the en passant file, but the en passant file is included **only when a pawn of the side to move could capture en passant** (pseudo-legally: a pawn on an adjacent file of the right rank, ignoring pins), as Stockfish does. Positions that differ only by an unusable en passant square therefore hash the same, so the solver's transposition table (§6.4) merges them. `toFen` still writes the en passant square after every double push (the standard FEN convention). (Decided 2026-10-22.)
+
 ### 4.6 Public API (sketch; refine in the Phase 1 plan)
 
 ```ts
@@ -231,6 +233,7 @@ Perft (node counts). Check these against chessprogramming.org "Perft Results" be
 | Pos 3 | `8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1` | 14 | 191 | 2812 | 43238 | 674624 |
 | Pos 4 | `r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1` | 6 | 264 | 9467 | 422333 | 15833292 |
 | Pos 5 | `rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8` | 44 | 1486 | 62379 | 2103487 | 89941194 |
+| Pos 6 | `r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10` | 46 | 2079 | 89890 | 3894594 | 164075551 |
 
 - Fast suite: all positions to the depth where count ≤ ~500,000. Slow suite: depth 5 for all, plus start position depth 6 (119060324).
 - Property tests: FEN round-trip; `makeMove`+`unmakeMove` restores board and Zobrist key exactly; incremental Zobrist equals Zobrist recomputed from scratch; for every legal move in random positions, `sanToMove(moveToSan(m)) === m` and the same for UCI.
@@ -310,7 +313,7 @@ The retractor is the side not to move in P. For each retractor piece:
 Validity of each candidate prior position P′:
 1. In P′ it's the retractor's turn, so the opponent's king must not be in check in P′.
 2. If P has an en passant square, the only valid retraction is the matching double push.
-3. **Confirm by forward generation.** Generate legal moves in P′ and check that one of them produces P (compare placement, side to move and en passant square). This guarantees soundness by construction.
+3. **Confirm by forward generation.** Generate legal moves in P′ and check that one of them produces P: compare placement and side to move, and compare the en passant square **only when P states one**. An en passant field of `-` means "not stated", not "the last move wasn't a double push" (many FENs, including hand-typed ones, write `-` after a double push). Rule 2 already handles the case where P states one. This guarantees soundness by construction. (Decided 2026-10-22.)
 
 Castling rights simplification: a normal retraction copies P's castling rights into P′. P′ might have had more rights, but the extra rights can't be known and don't affect other retractions. Log this in `DECISIONS.md`.
 
@@ -338,7 +341,7 @@ Castling rights simplification: a normal retraction copies P's castling rights i
 | `rnbqkbnr/pppppppp/8/8/8/2P5/P1PPPPPP/RNBQKBNR b KQkq - 0 1` | illegal: `PAWN_CAPTURES_EXCEED_MISSING` (b-pawn reached c3 by capturing, but Black is missing nothing) |
 | `4k3/8/8/8/8/8/8/5K1R w K - 0 1` | illegal: `CASTLING_RIGHTS_INCONSISTENT` |
 | `4k3/8/8/8/8/8/8/4K3 w - e6 0 1` | illegal: `EN_PASSANT_INCONSISTENT` |
-| `rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2` | legal, proof `e2e4 e7e5` |
+| `rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2` | legal, proof `e2e4 e7e5`. Written with `-`, so …e7-e5 must still be listed as a possible last move (§5.3 step 3). |
 | `8/8/8/8/8/8/8/K6k w - - 0 1` | undecided (needs a long proof game) |
 | `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1` | undecided in v1. It's actually illegal by a knight-parity argument (only knights can move and return, and a knight returning home always uses an even number of moves, so White can't have made one more move than Black). Proving it is stretch rule `PARITY` (§5.6). Use this example in `docs/learning`. |
 

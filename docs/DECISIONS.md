@@ -94,3 +94,16 @@ Append-only. Each entry: date, context, decision, consequences. Newest at the bo
 - Context: CLAUDE.md requires Go programs to load `.env` themselves, with no exported variables needed.
 - Decision: A small standard-library parser in `internal/config` (no dotenv dependency). It finds the nearest `.env` above the working directory, stopping at the repository root (the folder with `.git`). Real environment variables take priority, and the process environment is never modified: config reads through a lookup function, so there's no global mutable state.
 - Consequences: Supports `KEY=VALUE`, comments, `export`, quotes and a leading BOM (Notepad). It doesn't support multi-line values or variable expansion.
+
+## 2026-10-22: En passant in retro analysis and in the hash
+- Context: Reviewing the Phase 1 plan. A FEN en passant field of `-` is ambiguous: many FENs (hand-typed ones, and some tools') write `-` even right after a double push. A strict comparison would wrongly rule out a double push as the last move, e.g. …e7-e5 in `rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2`, which could even make a legal position look illegal.
+- Decision:
+  - **Retractions (§5.3 step 3):** an en passant field of `-` means "not stated". The forward-generation check compares placement and side to move, and compares the en passant square only when P states one (rule 2 then allows only the matching double push). The §5.5 fixture after 1.e4 e5 keeps …e7-e5 as a possible last move.
+  - **Zobrist (§4.5):** the en passant file is hashed only when a pawn of the side to move could capture en passant (pseudo-legally, ignoring pins), as Stockfish does. Positions that differ only by an unusable en passant square hash the same; a test pins this down.
+  - **FEN output:** `makeMove` records the en passant square after every double push and `toFen` writes it (standard FEN convention).
+- Consequences: Better transposition merging in the solver. `toFen` output and the hash deliberately disagree about unusable en passant squares; anything comparing positions for identity uses the hash or the target key, not FEN strings.
+
+## 2026-10-22: Phase 1 engine decisions
+- Castling is generated only when the right is in the castling flags **and** the king and that rook stand on their home squares, the squares between them are empty, the king isn't in check, and it doesn't pass through or land on an attacked square. Castling flags and the en passant square from a FEN are never trusted on their own, so syntactically valid but illegal positions (no king, two kings, a pawn on its first rank, stale rights) never crash move generation.
+- Perft adds chessprogramming.org's **Position 6** (`r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - - 0 10`: 46 / 2,079 / 89,890 / 3,894,594 / 164,075,551), copied from the Perft Results page, which also confirms every number in the §4.7 table. Fast-suite depths (largest depth with ≤ ~500,000 nodes): start d4, Kiwipete d3, Pos 3 d4 (d5 is 674,624), Pos 4 d4, Pos 5 d3, Pos 6 d3. The slow suite runs d5 for all six plus the start position at d6.
+- New dev dependencies: fast-check 4.10.2 (property tests, SPEC §3.4) and @vitest/coverage-v8 5.0.5 (enforces §11.2's 90% engine statement coverage in the engine's `test` script).
