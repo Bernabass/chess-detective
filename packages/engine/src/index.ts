@@ -6,7 +6,7 @@ import { isAttacked, findCheckers } from './core/attacks';
 import type { Position } from './core/position';
 
 /** Engine version, recorded with every generated puzzle. Keep in sync with package.json. */
-export const ENGINE_VERSION = '0.2.0';
+export const ENGINE_VERSION = '0.3.0';
 
 export type Color = 'w' | 'b';
 
@@ -57,3 +57,7 @@ export type { LastMove, LastMovesOptions, LastMovesResult, Viability } from './r
 export { lastMoves } from './retro/lastmoves';
 export type { AnalysisReport, AnalyzeOptions, Verdict } from './retro/analyze';
 export { analyzePosition } from './retro/analyze';
+export type { SolveOptions, SolveResult } from './solver/search';
+export { solveProofGame } from './solver/search';
+export type { ShortestOptions, ShortestResult } from './solver/shortest';
+export { shortestProofGame } from './solver/shortest';
