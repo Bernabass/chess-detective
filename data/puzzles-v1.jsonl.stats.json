@@ -1,0 +1,171 @@
+{
+  "engineVersion": "0.4.0",
+  "options": {
+    "count": 500,
+    "seed": 1,
+    "minPlies": 5,
+    "maxPlies": 12,
+    "jobs": 4,
+    "source": "both",
+    "nodeLimit": 200000,
+    "width": 180,
+    "children": 8,
+    "random": 2000
+  },
+  "elapsedMs": 4293661,
+  "accepted": 5630,
+  "stats": [
+    {
+      "plies": 1,
+      "candidates": 20,
+      "accepted": 20,
+      "notUnique": 0,
+      "notShortest": 0,
+      "limit": 0,
+      "totalMs": 168,
+      "maxMs": 35
+    },
+    {
+      "plies": 2,
+      "candidates": 400,
+      "accepted": 400,
+      "notUnique": 0,
+      "notShortest": 0,
+      "limit": 0,
+      "totalMs": 1401,
+      "maxMs": 30
+    },
+    {
+      "plies": 3,
+      "candidates": 813,
+      "accepted": 741,
+      "notUnique": 72,
+      "notShortest": 0,
+      "limit": 0,
+      "totalMs": 2564,
+      "maxMs": 44
+    },
+    {
+      "plies": 4,
+      "candidates": 847,
+      "accepted": 785,
+      "notUnique": 54,
+      "notShortest": 8,
+      "limit": 0,
+      "totalMs": 2816,
+      "maxMs": 30
+    },
+    {
+      "plies": 5,
+      "candidates": 1294,
+      "accepted": 778,
+      "notUnique": 515,
+      "notShortest": 1,
+      "limit": 0,
+      "totalMs": 4321,
+      "maxMs": 40
+    },
+    {
+      "plies": 6,
+      "candidates": 1252,
+      "accepted": 856,
+      "notUnique": 396,
+      "notShortest": 0,
+      "limit": 0,
+      "totalMs": 24960,
+      "maxMs": 338
+    },
+    {
+      "plies": 7,
+      "candidates": 1578,
+      "accepted": 1250,
+      "notUnique": 328,
+      "notShortest": 0,
+      "limit": 0,
+      "totalMs": 193516,
+      "maxMs": 1907
+    },
+    {
+      "plies": 8,
+      "candidates": 1508,
+      "accepted": 870,
+      "notUnique": 638,
+      "notShortest": 0,
+      "limit": 0,
+      "totalMs": 425753,
+      "maxMs": 5020
+    },
+    {
+      "plies": 9,
+      "candidates": 1388,
+      "accepted": 821,
+      "notUnique": 507,
+      "notShortest": 0,
+      "limit": 60,
+      "totalMs": 1715431,
+      "maxMs": 7263
+    },
+    {
+      "plies": 10,
+      "candidates": 1336,
+      "accepted": 463,
+      "notUnique": 548,
+      "notShortest": 0,
+      "limit": 325,
+      "totalMs": 3412519,
+      "maxMs": 8336
+    },
+    {
+      "plies": 11,
+      "candidates": 1458,
+      "accepted": 402,
+      "notUnique": 489,
+      "notShortest": 0,
+      "limit": 567,
+      "totalMs": 5687596,
+      "maxMs": 9545
+    },
+    {
+      "plies": 12,
+      "candidates": 1347,
+      "accepted": 190,
+      "notUnique": 418,
+      "notShortest": 0,
+      "limit": 739,
+      "totalMs": 5588202,
+      "maxMs": 9023
+    }
+  ],
+  "quotas": [
+    {
+      "min": 5,
+      "max": 6,
+      "wanted": 75,
+      "found": 75
+    },
+    {
+      "min": 7,
+      "max": 8,
+      "wanted": 140,
+      "found": 140
+    },
+    {
+      "min": 9,
+      "max": 9,
+      "wanted": 75,
+      "found": 75
+    },
+    {
+      "min": 10,
+      "max": 11,
+      "wanted": 140,
+      "found": 131
+    },
+    {
+      "min": 12,
+      "max": 12,
+      "wanted": 70,
+      "found": 70
+    }
+  ]
+}
