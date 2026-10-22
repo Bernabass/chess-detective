@@ -26,5 +26,6 @@ test-results/
 Thumbs.db
 *.log
 
-# Personal editor settings
-.vscode/
+# Personal editor settings (only the shared extension recommendations are tracked)
+.vscode/*
+!.vscode/extensions.json
