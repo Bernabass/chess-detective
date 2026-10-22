@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/main.ts",
+    "measure": "tsx scripts/measure.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
