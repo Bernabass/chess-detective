@@ -8,5 +8,6 @@ LICENSE
 **/*.gen.ts
 apps/web/src/api/schema.d.ts
 services/api/internal/**/*.gen.go
-# Personal editor settings (also gitignored)
-.vscode/
+# Personal editor settings (also gitignored); extensions.json is shared and formatted
+.vscode/*
+!.vscode/extensions.json

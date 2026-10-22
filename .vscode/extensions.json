@@ -1,0 +1,12 @@
+{
+  "recommendations": [
+    "golang.go",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "vitest.explorer",
+    "ms-playwright.playwright",
+    "bradlc.vscode-tailwindcss",
+    "redhat.vscode-yaml",
+    "editorconfig.editorconfig"
+  ]
+}
