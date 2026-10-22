@@ -1,5 +1,8 @@
-import { BLACK, WHITE } from '../core/board';
+import { BLACK, WHITE, squareName } from '../core/board';
+import { targetKey, toFen } from '../core/fen';
 import type { Position } from '../core/position';
+import { replay } from '../core/replay';
+import { shortestProofGame } from '../solver/shortest';
 import { capturedList } from './describe';
 import { COLOR_NAME, type Finding } from './findings';
 import { isInitialPlacement, lastMoves, type LastMove, type LastMovesResult } from './lastmoves';
@@ -20,6 +23,12 @@ export interface AnalyzeOptions {
   /** Default 200,000 retraction generations. */
   nodeLimit?: number;
   shouldStop?: () => boolean;
+  /** Longest proof game the quick proof attempt looks for (default 10 plies; 0 disables it). */
+  proofMaxPlies?: number;
+  /** Time for the quick proof attempt (default 750 ms, separate from timeLimitMs). */
+  proofTimeLimitMs?: number;
+  /** Search nodes for the quick proof attempt (default 1,000,000). */
+  proofNodeLimit?: number;
 }
 
 export interface AnalysisReport {
@@ -30,8 +39,9 @@ export interface AnalysisReport {
 /**
  * Full Lab analysis (SPEC §5): static rules, last moves at the requested depth, and the
  * last-move rules NO_POSSIBLE_LAST_MOVE, NO_POSSIBLE_HISTORY and LAST_MOVE_FORCED. `illegal`
- * only from certain contradictions; `legal` only with a proof game (until the Phase 3 solver,
- * only the initial position, whose proof is the empty game).
+ * only from certain contradictions. Otherwise a quick proof attempt (SPEC §5.1): `legal` only
+ * with a proof game that reaches the position and keeps its stated castling rights and en
+ * passant square; else `undecided`.
  */
 export function analyzePosition(p: Position, opts: AnalyzeOptions = {}): AnalysisReport {
   const depth = Math.max(1, Math.floor(opts.depth ?? 3));
@@ -47,16 +57,52 @@ export function analyzePosition(p: Position, opts: AnalyzeOptions = {}): Analysi
   let verdict: Verdict;
   if (contradiction) {
     verdict = { kind: 'illegal', findings: sortFindings(findings) };
-  } else if (isInitialPlacement(p) && p.epSquare < 0) {
-    verdict = { kind: 'legal', proof: [], findings: sortFindings(findings) };
+    return { verdict, lastMoves: report };
+  }
+
+  const attempt = proveQuickly(p, opts);
+  if (attempt.proof !== null) {
+    verdict = { kind: 'legal', proof: attempt.proof, findings: sortFindings(findings) };
   } else {
+    const cutShort = report.status !== 'complete' || attempt.cutShort;
     verdict = {
       kind: 'undecided',
       findings: sortFindings(findings),
-      reason: report.status === 'complete' ? 'no-contradiction-found' : 'search-limit',
+      reason: cutShort ? 'search-limit' : 'no-contradiction-found',
     };
   }
   return { verdict, lastMoves: report };
+}
+
+/**
+ * The quick proof attempt: the shortest proof game up to `proofMaxPlies` that reaches the
+ * position's placement and side to move, keeps every castling right it states and ends on the
+ * en passant square it states. A found proof is replayed as a self-check.
+ */
+function proveQuickly(
+  p: Position,
+  opts: AnalyzeOptions,
+): { proof: string[] | null; cutShort: boolean } {
+  const maxPlies = Math.floor(opts.proofMaxPlies ?? 10);
+  if (maxPlies <= 0) return { proof: null, cutShort: false };
+  const castling = toFen(p).split(' ')[2] ?? '-';
+  const r = shortestProofGame(targetKey(p), maxPlies, {
+    timeLimitMs: opts.proofTimeLimitMs ?? 750,
+    nodeLimit: opts.proofNodeLimit ?? 1_000_000,
+    ...(castling === '-' ? {} : { castling }),
+    ...(p.epSquare < 0 ? {} : { enPassant: squareName(p.epSquare) }),
+    ...(opts.shouldStop ? { shouldStop: opts.shouldStop } : {}),
+  });
+  if (r.solution === null) return { proof: null, cutShort: r.status !== 'complete' };
+  const check = replay(r.solution);
+  const valid =
+    check.ok &&
+    targetKey(check.value) === targetKey(p) &&
+    (check.value.castling & p.castling) === p.castling &&
+    (p.epSquare < 0 || check.value.epSquare === p.epSquare);
+  if (!valid)
+    throw new Error(`internal error: proof ${r.solution.join(' ')} does not reach the position`);
+  return { proof: r.solution, cutShort: false };
 }
 
 function sortFindings(findings: Finding[]): Finding[] {

@@ -120,9 +120,32 @@ describe('analyzePosition: last-move rules', () => {
     expect(report.verdict).toMatchObject({ kind: 'legal', proof: [] });
   });
 
-  it('a normal position is undecided without a solver (Phase 3 adds proofs)', () => {
+  it('a reachable position is legal, with its shortest proof (SPEC §5.1)', () => {
     const report = analyzePosition(fen(AFTER_E4_E5));
-    expect(report.verdict).toMatchObject({ kind: 'undecided', reason: 'no-contradiction-found' });
+    expect(report.verdict).toMatchObject({ kind: 'legal', proof: ['e2e4', 'e7e5'] });
     expect(report.lastMoves.moves.some((m) => m.move === 'e7e5')).toBe(true);
+  });
+
+  it('stays undecided when no proof fits the quick attempt, saying why', () => {
+    // Bare kings need a long proof game: the lower bound alone exceeds 10 plies.
+    expect(analyzePosition(fen('8/8/8/8/8/8/8/K6k w - - 0 1')).verdict).toMatchObject({
+      kind: 'undecided',
+      reason: 'no-contradiction-found',
+    });
+    // Disabled, or cut short by its node limit.
+    expect(analyzePosition(fen(AFTER_E4_E5), { proofMaxPlies: 0 }).verdict).toMatchObject({
+      kind: 'undecided',
+      reason: 'no-contradiction-found',
+    });
+    const castled = 'r1bqkbnr/pppppppp/2n5/8/8/5NP1/PPPPPPBP/RNBQ1RK1 b kq - 4 4';
+    expect(analyzePosition(fen(castled), { proofNodeLimit: 1 }).verdict).toMatchObject({
+      kind: 'undecided',
+      reason: 'search-limit',
+    });
+  });
+
+  it('a proof honours the stated castling rights and en passant square', () => {
+    const r = analyzePosition(fen('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1'));
+    expect(r.verdict).toMatchObject({ kind: 'legal', proof: ['e2e4'] });
   });
 });
