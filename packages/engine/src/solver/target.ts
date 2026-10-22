@@ -60,6 +60,14 @@ export interface Target {
   pieces: number[][][];
   /** Total pieces per side. */
   counts: [number, number];
+  /**
+   * Squares of the target's pawns on their starting rank. Such a pawn never moved (no pawn can
+   * come back to its second rank), so it stands there all game and is never captured: no piece
+   * of either side can ever stand on or pass through these squares.
+   */
+  frozen: Uint8Array;
+  /** Distance tables on the frozen-pawn board by kind * 128 + to, built on first use (see obstacleDistance). */
+  tables: (Uint8Array | undefined)[];
 }
 
 /** Parses a target key ("placement w|b"). Anything else, including a full FEN, is an error. */
@@ -75,14 +83,25 @@ export function parseTarget(key: string): Result<Target, string> {
   const p = parsed.value;
   const pieces = [0, 1].map(() => Array.from({ length: KINDS }, () => [] as number[]));
   const counts: [number, number] = [0, 0];
+  const frozen = new Uint8Array(128);
   for (let sq = 0; sq < 128; sq++) {
     const piece = p.board[sq]!;
     if ((sq & 0x88) !== 0 || piece === 0) continue;
     const side = piece > 0 ? WHITE : BLACK;
     pieces[side]![kindOf(piece, sq)]!.push(sq);
     counts[side]++;
+    if ((piece === PAWN && rankOf(sq) === 1) || (piece === -PAWN && rankOf(sq) === 6))
+      frozen[sq] = 1;
   }
-  return ok({ key: fields.join(' '), board: p.board, turn: p.turn, pieces, counts });
+  return ok({
+    key: fields.join(' '),
+    board: p.board,
+    turn: p.turn,
+    pieces,
+    counts,
+    frozen,
+    tables: [],
+  });
 }
 
 // ---- Empty-board distances (lower bounds on moves, SPEC §6.3) ----
@@ -169,4 +188,63 @@ export function distance(kind: number, side: Side, from: number, to: number): nu
     default:
       return kingDistance(from, to);
   }
+}
+
+const KNIGHT_JUMPS = [33, 31, 18, 14, -14, -18, -31, -33] as const;
+const KING_STEPS = [17, 16, 15, 1, -1, -15, -16, -17] as const;
+const ROOK_RAYS = [16, -16, 1, -1] as const;
+const BISHOP_RAYS = [17, 15, -15, -17] as const;
+const UNREACHABLE = 255;
+
+/**
+ * Distances to `to` from every square for a piece of `kind`, by breadth-first search on a board
+ * whose only obstacles are the target's frozen pawns. These are still lower bounds (the obstacles
+ * are there all game), and much tighter than empty-board distances while most pawns are at
+ * home: a bishop behind unmoved pawns can't get out at all. All these move sets are symmetric,
+ * so a search outward from `to` gives the distance from any square to `to`.
+ */
+function distanceTable(t: Target, kind: number, to: number): Uint8Array {
+  const key = kind * 128 + to;
+  const cached = t.tables[key];
+  if (cached !== undefined) return cached;
+  const dist = new Uint8Array(128).fill(UNREACHABLE);
+  if (t.frozen[to] !== 1) {
+    dist[to] = 0;
+    const queue = [to];
+    const rays =
+      kind === K_ROOK ? ROOK_RAYS : kind === K_QUEEN ? [...ROOK_RAYS, ...BISHOP_RAYS] : BISHOP_RAYS;
+    const sliding =
+      kind === K_ROOK || kind === K_QUEEN || kind === K_LIGHT_BISHOP || kind === K_DARK_BISHOP;
+    for (const sq of queue) {
+      const d = dist[sq]! + 1;
+      const visit = (next: number): boolean => {
+        if ((next & 0x88) !== 0 || t.frozen[next] === 1) return false;
+        if (dist[next] === UNREACHABLE) {
+          dist[next] = d;
+          queue.push(next);
+        }
+        return true;
+      };
+      if (sliding) {
+        for (const ray of rays) for (let next = sq + ray; visit(next); next += ray);
+      } else {
+        for (const step of kind === K_KNIGHT ? KNIGHT_JUMPS : KING_STEPS) visit(sq + step);
+      }
+    }
+  }
+  t.tables[key] = dist;
+  return dist;
+}
+
+/** Lower bound on moves for a piece of `kind` from `from` to the target square `to` (SPEC §6.3). */
+export function obstacleDistance(
+  t: Target,
+  kind: number,
+  side: Side,
+  from: number,
+  to: number,
+): number {
+  if (kind === K_PAWN) return pawnDistance(side, from, to);
+  const d = distanceTable(t, kind, to)[from]!;
+  return d === UNREACHABLE ? Infinity : d;
 }

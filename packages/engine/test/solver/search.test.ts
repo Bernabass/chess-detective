@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { replay, shortestProofGame, solveProofGame, targetKey } from '../../src/index';
+import {
+  minimumPlies,
+  replay,
+  shortestProofGame,
+  solveProofGame,
+  targetKey,
+} from '../../src/index';
+import { acquireTable, releaseTable, TranspositionTable } from '../../src/solver/tt';
 
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w';
 const START_BLACK = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b';
@@ -92,5 +99,44 @@ describe('shortestProofGame', () => {
     const r = shortestProofGame(START_BLACK, 15, { nodeLimit: 2000 });
     expect(r.status).toBe('limit');
     expect(r.nodes).toBeLessThanOrEqual(2001);
+  });
+});
+
+describe('minimumPlies', () => {
+  it('is the lower bound from the start, with the parity the side to move requires', () => {
+    expect(minimumPlies(AFTER_E4_E5)).toBe(2);
+    expect(minimumPlies(AFTER_E4)).toBe(1);
+    expect(minimumPlies(START)).toBe(0);
+    expect(minimumPlies(START_BLACK)).toBe(1); // bound 0, but Black to move needs an odd length
+    expect(minimumPlies('rnbqkbnr/pppppppp/8/8/8/4B3/PPPPPPPP/RNBQK1NR w')).toBeNull();
+  });
+});
+
+describe('TranspositionTable', () => {
+  it('forgets every entry on reset, and pooled tables come back empty', () => {
+    const tt = new TranspositionTable(8);
+    tt.set(1, 2, 3, 7);
+    expect(tt.get(1, 2, 3)).toBe(7);
+    expect(tt.get(1, 2, 4)).toBe(-1);
+    tt.reset();
+    expect(tt.get(1, 2, 3)).toBe(-1);
+
+    const a = acquireTable(8);
+    a.set(5, 6, 1, 1);
+    releaseTable(a);
+    const b = acquireTable(8);
+    expect(b).toBe(a);
+    expect(b.get(5, 6, 1)).toBe(-1);
+    releaseTable(b);
+  });
+
+  it('gives the same counts when solves reuse pooled tables', () => {
+    const r = replay(['e2e4', 'e7e5', 'g1f3', 'b8c6']);
+    if (!r.ok) throw new Error(r.error.reason);
+    const t = targetKey(r.value);
+    const first = solveProofGame(t, { plies: 4, mode: 'count', cap: 100 });
+    const again = solveProofGame(t, { plies: 4, mode: 'count', cap: 100 });
+    expect(again.count).toBe(first.count);
+    expect(again.nodes).toBe(first.nodes);
   });
 });

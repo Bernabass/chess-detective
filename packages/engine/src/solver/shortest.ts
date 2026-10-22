@@ -2,8 +2,8 @@ import { WHITE } from '../core/board';
 import { initialPosition } from '../core/fen';
 import { createLowerBound } from './bound';
 import { defaultTtBits, solveFrom, type SolveOptions } from './search';
-import { parseTarget } from './target';
-import { TranspositionTable } from './tt';
+import { parseTarget, type Target } from './target';
+import { acquireTable, releaseTable, type TranspositionTable } from './tt';
 
 export interface ShortestResult {
   status: 'complete' | 'limit' | 'aborted';
@@ -43,21 +43,17 @@ export function shortestProofGame(
     elapsedMs: 0,
     searched: [],
   };
+  let tt: TranspositionTable | null = null;
   const finish = (): ShortestResult => {
+    if (tt !== null) releaseTable(tt);
     result.elapsedMs = Date.now() - startTime;
     return result;
   };
 
-  const h = createLowerBound(t)(initialPosition());
-  if (h === null) return finish(); // unreachable from the start: no proof of any length
+  const first = firstLength(t);
+  if (first === null) return finish(); // unreachable from the start: no proof of any length
+  let n = first;
 
-  // White moves first: after N plies White has made ceil(N/2) moves and Black floor(N/2).
-  let n = t.turn === WHITE ? 0 : 1;
-  while (Math.ceil(n / 2) < h.white || Math.floor(n / 2) < h.black) n += 2;
-
-  // Created on first use: often nothing is searched at all (the lower bound alone exceeds
-  // maxPlies), and analyzePosition calls this for every Lab analysis.
-  let tt: TranspositionTable | null = null;
   for (; n <= maxPlies; n += 2) {
     const elapsed = Date.now() - startTime;
     const outOfTime = opts.timeLimitMs !== undefined && elapsed >= opts.timeLimitMs;
@@ -66,7 +62,7 @@ export function shortestProofGame(
       result.status = 'limit';
       return finish();
     }
-    tt ??= new TranspositionTable(opts.ttBits ?? defaultTtBits(maxPlies));
+    tt ??= acquireTable(opts.ttBits ?? defaultTtBits(maxPlies));
     const r = solveFrom(
       initialPosition(),
       t,
@@ -103,4 +99,28 @@ export function shortestProofGame(
     result.searched.push(n);
   }
   return finish();
+}
+
+/**
+ * The shortest length a proof game for `t` can have according to the lower bound from the
+ * initial position, with the parity its side to move requires, or null if unreachable.
+ */
+function firstLength(t: Target): number | null {
+  const h = createLowerBound(t)(initialPosition());
+  if (h === null) return null;
+  // White moves first: after N plies White has made ceil(N/2) moves and Black floor(N/2).
+  let n = t.turn === WHITE ? 0 : 1;
+  while (Math.ceil(n / 2) < h.white || Math.floor(n / 2) < h.black) n += 2;
+  return n;
+}
+
+/**
+ * The fewest plies any proof game for `target` (placement + side to move) can have, by the lower
+ * bound (SPEC §6.3), or null if no game can reach it. A proof game may still need more: this
+ * is where shortestProofGame starts, and where shortest-proof checks can stop.
+ */
+export function minimumPlies(target: string): number | null {
+  const parsed = parseTarget(target);
+  if (!parsed.ok) throw new Error(parsed.error);
+  return firstLength(parsed.value);
 }

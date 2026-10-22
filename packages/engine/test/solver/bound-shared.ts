@@ -1,8 +1,16 @@
-import { createRng, initialPosition, makeMove, targetKey, toFen } from '../../src/index';
+import {
+  createRng,
+  initialPosition,
+  legalMoves,
+  makeMove,
+  targetKey,
+  toFen,
+  unmakeMove,
+} from '../../src/index';
 import { WHITE } from '../../src/core/board';
 import { isCastle, isEnPassant, isPromotion, movePromotion, type Move } from '../../src/core/move';
 import type { Position } from '../../src/core/position';
-import { createLowerBound } from '../../src/solver/bound';
+import { createIncrementalBound, createLowerBound } from '../../src/solver/bound';
 import { parseTarget } from '../../src/solver/target';
 import { playRandomGame } from '../../src/util/random-game';
 
@@ -14,6 +22,8 @@ export interface AdmissibilityStats {
   promotions: number;
   /** Games where a side promoted to a type it already had and that original piece was captured later. */
   promotedTwinThenOriginalCaptured: number;
+  /** Positions where the incremental bound (search path) was compared with a fresh one. */
+  incrementalChecks: number;
 }
 
 /**
@@ -56,9 +66,14 @@ function hasPromotedTwinPattern(moves: readonly Move[]): boolean {
 
 /**
  * Plays seeded random games and checks, for every prefix position, that each side's lower
- * bound to the game's final target is at most that side's remaining moves (SPEC §6.3).
+ * bound to the game's final target is at most that side's remaining moves (SPEC §6.3). In the
+ * first `incrementalGames` games it also checks the search's incremental bound against it.
  */
-export function checkAdmissibility(firstSeed: number, games: number): AdmissibilityStats {
+export function checkAdmissibility(
+  firstSeed: number,
+  games: number,
+  incrementalGames = 0,
+): AdmissibilityStats {
   const stats: AdmissibilityStats = {
     games: 0,
     positions: 0,
@@ -66,6 +81,7 @@ export function checkAdmissibility(firstSeed: number, games: number): Admissibil
     enPassant: 0,
     promotions: 0,
     promotedTwinThenOriginalCaptured: 0,
+    incrementalChecks: 0,
   };
   for (let seed = firstSeed; seed < firstSeed + games; seed++) {
     const rng = createRng(seed);
@@ -73,6 +89,23 @@ export function checkAdmissibility(firstSeed: number, games: number): Admissibil
     const parsed = parseTarget(targetKey(position));
     if (!parsed.ok) throw new Error(parsed.error);
     const bound = createLowerBound(parsed.value);
+    // The search's incremental bound follows the game with push, and at every third position
+    // also tries one other move (push, compare, pop), so pop is checked too.
+    const inc = createIncrementalBound(parsed.value);
+    const out = new Int32Array(2);
+    const incremental = (q: Position): string =>
+      JSON.stringify(inc.evaluate(q, out) ? { white: out[0], black: out[1] } : null);
+    const checkIncremental = seed < firstSeed + incrementalGames;
+    const sameAsFresh = (q: Position, where: string): void => {
+      if (!checkIncremental) return;
+      stats.incrementalChecks++;
+      const fresh = JSON.stringify(bound(q));
+      if (incremental(q) !== fresh) {
+        throw new Error(
+          `seed ${String(seed)}, ${where}: incremental ${incremental(q)} != fresh ${fresh} at ${toFen(q)}`,
+        );
+      }
+    };
     stats.games++;
     if (moves.some(isCastle)) stats.castles++;
     if (moves.some(isEnPassant)) stats.enPassant++;
@@ -80,7 +113,18 @@ export function checkAdmissibility(firstSeed: number, games: number): Admissibil
     if (hasPromotedTwinPattern(moves)) stats.promotedTwinThenOriginalCaptured++;
 
     const p: Position = initialPosition();
+    inc.reset(p);
     for (let i = 0; i <= moves.length; i++) {
+      sameAsFresh(p, `ply ${String(i)}`);
+      const others = checkIncremental && i % 3 === 0 ? legalMoves(p) : [];
+      const other = others[rng.nextInt(Math.max(1, others.length))];
+      if (other !== undefined) {
+        makeMove(p, other);
+        inc.push(p, other);
+        sameAsFresh(p, `ply ${String(i)} + side move`);
+        inc.pop();
+        unmakeMove(p);
+      }
       const remaining = moves.length - i;
       const whiteLeft = p.turn === WHITE ? Math.ceil(remaining / 2) : Math.floor(remaining / 2);
       const blackLeft = remaining - whiteLeft;
@@ -93,7 +137,10 @@ export function checkAdmissibility(firstSeed: number, games: number): Admissibil
         );
       }
       const m = moves[i];
-      if (m !== undefined) makeMove(p, m);
+      if (m !== undefined) {
+        makeMove(p, m);
+        if (checkIncremental) inc.push(p, m);
+      }
     }
   }
   return stats;

@@ -17,23 +17,23 @@ import {
   H1,
   H8,
   KING,
+  PAWN,
   ROOK,
   WHITE,
   WHITE_KINGSIDE,
   WHITE_QUEENSIDE,
   type Side,
 } from '../core/board';
-import type { Position } from '../core/position';
+import { FLAG_CASTLE, FLAG_EN_PASSANT, FLAG_PROMOTION, type Move } from '../core/move';
+import { UNDO_STRIDE, type Position } from '../core/position';
 import {
   K_KING,
   K_PAWN,
   K_ROOK,
   KINDS,
-  distance,
   kindOf,
-  kingDistance,
+  obstacleDistance,
   pawnDistance,
-  rookDistance,
   type Target,
 } from './target';
 
@@ -45,6 +45,29 @@ export interface Bound {
 
 /** Writes [white, black] into `out` and returns true, or returns false if the target is unreachable. */
 export type BoundFn = (p: Position, out: Int32Array) => boolean;
+
+/**
+ * The bound with its piece lists kept up to date move by move, for the search (SPEC §6.3).
+ * Rebuilding the lists from the board at every node was half of the solver's time; a move
+ * changes at most three of them (the mover, a captured piece, a castling rook).
+ */
+export interface IncrementalBound {
+  /** Rebuilds the piece lists from `p`. */
+  reset: (p: Position) => void;
+  /** Call right after makeMove(p, m): updates the lists for that move. */
+  push: (p: Position, m: Move) => void;
+  /** Call before the matching unmakeMove: restores the lists exactly. */
+  pop: () => void;
+  /** The bound for `p`, whose lists must be current. */
+  evaluate: BoundFn;
+}
+
+/** Undo log entries: a piece appended to a list, a piece removed (swapped with the last), a capture. */
+const OP_ADD = 0;
+const OP_REMOVE = 1;
+const OP_CAPTURE = 2;
+/** Most undo entries one move writes (castling: 4). */
+const OPS_PER_MOVE = 4;
 
 interface CastleInfo {
   right: number;
@@ -83,29 +106,53 @@ const MAX_PER_KIND = 64;
  * square (its own move is free). That keeps the bound admissible (the "castling trap").
  *
  * Allocation-free on cache hits (the common case): the search calls it at every node.
+ *
+ * Each (side, kind) cost is memoized on its exact inputs: that kind's piece list (identified by
+ * a version number that changes whenever the list does), the promotion allowance and, for kings
+ * and rooks, which castlings are still available. Sibling nodes in a search usually change one
+ * kind of one side, so the other kinds are reused; and because the key is the complete input,
+ * the result always equals a from-scratch computation.
  */
 export function createBoundFn(t: Target): BoundFn {
+  const inc = createIncrementalBound(t);
+  return (p, out) => {
+    inc.reset(p);
+    return inc.evaluate(p, out);
+  };
+}
+
+/** See IncrementalBound; the bound itself is described at createBoundFn. */
+export function createIncrementalBound(t: Target): IncrementalBound {
   // Current pieces: squares[(side * KINDS + kind) * MAX_PER_KIND + i], counts in len.
   const squares = new Int16Array(2 * KINDS * MAX_PER_KIND);
   const len = new Int16Array(2 * KINDS);
   const wanted = t.pieces;
-  const wantedLen = [0, 1].map((side) => wanted[side]!.map((list) => list.length));
-  // Pawn cost cache per side: the last pawn set, plus a map of earlier ones.
-  const lastPawns = [
-    new Int16Array(MAX_PER_KIND + 1).fill(-1),
-    new Int16Array(MAX_PER_KIND + 1).fill(-1),
-  ];
-  const lastPawnCost = [0, 0];
+  // Target pieces per (side, kind) slot.
+  const wantedLen = new Int16Array(2 * KINDS);
+  for (let slot = 0; slot < 2 * KINDS; slot++) {
+    wantedLen[slot] = wanted[slot >= KINDS ? 1 : 0]![slot % KINDS]!.length;
+  }
+  // Version of each slot's piece list: a fresh number whenever the list changes, and the old
+  // one back when pop restores it. Equal versions mean equal lists, in the same order.
+  const version = new Int32Array(2 * KINDS);
+  let nextVersion = 1;
+  // Pawn cost cache per side: the version it was computed for, plus a map of earlier pawn sets.
+  const lastPawnVersion = new Int32Array(2);
+  const lastPawnCost = new Float64Array(2);
   const pawnCache = [new Map<number | string, number>(), new Map<number | string, number>()];
   const pieceCount = new Int16Array(2);
+  // Castlings still available per side: bit 0 kingside, bit 1 queenside (right + king and rook home).
+  const castles = new Int8Array(2);
+  // Per (side, kind) memo of the last inputs (list version, castlings and promotions) and cost.
+  const memoVersion = new Int32Array(2 * KINDS);
+  const memoKey = new Int32Array(2 * KINDS);
+  const memoCost = new Float64Array(2 * KINDS);
 
   const pawnCostCached = (side: Side): number => {
-    const base = (side * KINDS + K_PAWN) * MAX_PER_KIND;
-    const n = len[side * KINDS + K_PAWN]!;
-    const last = lastPawns[side]!;
-    let same = last[0] === n;
-    for (let i = 0; same && i < n; i++) same = last[i + 1] === squares[base + i];
-    if (same) return lastPawnCost[side]!;
+    const slot = side * KINDS + K_PAWN;
+    if (lastPawnVersion[side] === version[slot]) return lastPawnCost[side]!;
+    const base = slot * MAX_PER_KIND;
+    const n = len[slot]!;
     // Up to 8 pawns, 6 bits each (square 0..63), fit exactly in a number; more needs a string.
     let key: number | string;
     if (n <= 8) {
@@ -124,30 +171,28 @@ export function createBoundFn(t: Target): BoundFn {
       if (pawnCache[side]!.size > 100_000) pawnCache[side]!.clear();
       pawnCache[side]!.set(key, cost);
     }
-    last[0] = n;
-    for (let i = 0; i < n; i++) last[i + 1] = squares[base + i]!;
+    lastPawnVersion[side] = version[slot]!;
     lastPawnCost[side] = cost;
     return cost;
   };
 
-  const sideBound = (p: Position, side: Side): number => {
+  const sideBound = (side: Side): number => {
     if (pieceCount[side]! < t.counts[side]) return Infinity; // pieces never come back
-    const spare = len[side * KINDS + K_PAWN]! - wantedLen[side]![K_PAWN]!;
+    const first = side * KINDS;
+    const spare = len[first + K_PAWN]! - wantedLen[first + K_PAWN]!;
     if (spare < 0) return Infinity;
     let unmatched = 0;
     for (let kind = 1; kind < KINDS; kind++) {
-      const extra = wantedLen[side]![kind]! - len[side * KINDS + kind]!;
+      const extra = wantedLen[first + kind]! - len[first + kind]!;
       if (extra > 0) unmatched += extra;
     }
     if (unmatched > spare) return Infinity; // not enough pawns left to promote
 
-    const pawnsWanted = wantedLen[side]![K_PAWN]!;
-    let cost = pawnsWanted === 0 ? 0 : pawnCostCached(side);
+    let cost = wantedLen[first + K_PAWN] === 0 ? 0 : pawnCostCached(side);
     if (cost === Infinity) return Infinity;
     for (let kind = 1; kind < KINDS; kind++) {
-      const piecesWanted = wantedLen[side]![kind]!;
-      if (piecesWanted === 0) continue;
-      const c = kindCost(p, side, kind, kind === K_KING ? 0 : spare);
+      if (wantedLen[first + kind] === 0) continue;
+      const c = memoKindCost(side, kind, kind === K_KING ? 0 : spare);
       if (c === Infinity) return Infinity;
       cost += c;
     }
@@ -156,8 +201,20 @@ export function createBoundFn(t: Target): BoundFn {
     return captures > cost ? captures : cost;
   };
 
+  /** kindCost, reused when this (side, kind) has exactly the same inputs as last time. */
+  const memoKindCost = (side: Side, kind: number, promotions: number): number => {
+    const slot = side * KINDS + kind;
+    const key = (kind === K_KING || kind === K_ROOK ? castles[side]! : 0) * 256 + promotions;
+    if (memoVersion[slot] === version[slot] && memoKey[slot] === key) return memoCost[slot]!;
+    const cost = kindCost(side, kind, promotions);
+    memoVersion[slot] = version[slot]!;
+    memoKey[slot] = key;
+    memoCost[slot] = cost;
+    return cost;
+  };
+
   /** Cheapest way to provide this kind's target pieces (see createBoundFn). */
-  const kindCost = (p: Position, side: Side, kind: number, promotions: number): number => {
+  const kindCost = (side: Side, kind: number, promotions: number): number => {
     const targets = wanted[side]![kind]!;
     const n = targets.length;
     if (promotions >= n) return 0;
@@ -167,7 +224,7 @@ export function createBoundFn(t: Target): BoundFn {
       const to = targets[0]!;
       let best = Infinity;
       for (let i = 0; i < m; i++) {
-        const di = pieceDistance(p, side, kind, squares[base + i]!, to);
+        const di = pieceDistance(t, castles[side]!, side, kind, squares[base + i]!, to);
         if (di < best) best = di;
       }
       return best;
@@ -177,8 +234,8 @@ export function createBoundFn(t: Target): BoundFn {
       const t1 = targets[1]!;
       let best = Infinity;
       for (let i = 0; i < m; i++) {
-        const di0 = pieceDistance(p, side, kind, squares[base + i]!, t0);
-        const di1 = pieceDistance(p, side, kind, squares[base + i]!, t1);
+        const di0 = pieceDistance(t, castles[side]!, side, kind, squares[base + i]!, t0);
+        const di1 = pieceDistance(t, castles[side]!, side, kind, squares[base + i]!, t1);
         if (promotions === 1) {
           // One target matched, the other promoted.
           best = Math.min(best, di0, di1);
@@ -186,22 +243,148 @@ export function createBoundFn(t: Target): BoundFn {
         }
         for (let j = 0; j < m; j++) {
           if (j === i) continue;
-          const dj0 = pieceDistance(p, side, kind, squares[base + j]!, t0);
-          const dj1 = pieceDistance(p, side, kind, squares[base + j]!, t1);
+          const dj0 = pieceDistance(t, castles[side]!, side, kind, squares[base + j]!, t0);
+          const dj1 = pieceDistance(t, castles[side]!, side, kind, squares[base + j]!, t1);
           best = Math.min(best, di0 + dj1, di1 + dj0);
         }
       }
       return best;
     }
     return generalAssignment(m, n, promotions, (i, j) =>
-      pieceDistance(p, side, kind, squares[base + i]!, targets[j]!),
+      pieceDistance(t, castles[side]!, side, kind, squares[base + i]!, targets[j]!),
     );
   };
 
-  return (p: Position, out: Int32Array): boolean => {
+  // Undo log: entries of 5 ints (type, slot, index, square, the slot's previous version), and
+  // the entry count before each push.
+  let ops = new Int32Array(64 * OPS_PER_MOVE * 5);
+  let opCount = 0;
+  let marks = new Int32Array(64);
+  let depth = 0;
+
+  const log = (type: number, slot: number, index: number, sq: number, previous: number): void => {
+    const o = opCount * 5;
+    ops[o] = type;
+    ops[o + 1] = slot;
+    ops[o + 2] = index;
+    ops[o + 3] = sq;
+    ops[o + 4] = previous;
+    opCount++;
+  };
+  const add = (slot: number, sq: number): void => {
+    const n = len[slot]!;
+    squares[slot * MAX_PER_KIND + n] = sq;
+    len[slot] = n + 1;
+    log(OP_ADD, slot, n, sq, version[slot]!);
+    version[slot] = nextVersion++;
+  };
+  const remove = (slot: number, sq: number): void => {
+    const base = slot * MAX_PER_KIND;
+    const last = len[slot]! - 1;
+    let i = last;
+    while (i > 0 && squares[base + i] !== sq) i--;
+    squares[base + i] = squares[base + last]!;
+    len[slot] = last;
+    log(OP_REMOVE, slot, i, sq, version[slot]!);
+    version[slot] = nextVersion++;
+  };
+
+  const push = (p: Position, m: Move): void => {
+    if (depth === marks.length) {
+      const bigger = new Int32Array(marks.length * 2);
+      bigger.set(marks);
+      marks = bigger;
+    }
+    if ((opCount + OPS_PER_MOVE) * 5 > ops.length) {
+      const bigger = new Int32Array(ops.length * 2);
+      bigger.set(ops);
+      ops = bigger;
+    }
+    marks[depth++] = opCount;
+    const from = m & 0x7f;
+    const to = (m >>> 7) & 0x7f;
+    const placed = p.board[to]!;
+    const side = placed > 0 ? WHITE : BLACK;
+    const captured = p.undo[(p.ply - 1) * UNDO_STRIDE + 1]!;
+    if (captured !== 0) {
+      const other = side === WHITE ? BLACK : WHITE;
+      const at = (m & FLAG_EN_PASSANT) !== 0 ? (to & 7) | (from & 0x70) : to;
+      remove(other * KINDS + kindOf(captured, at), at);
+      pieceCount[other]!--;
+      log(OP_CAPTURE, other, 0, 0, 0);
+    }
+    const moved = (m & FLAG_PROMOTION) !== 0 ? (side === WHITE ? PAWN : -PAWN) : placed;
+    remove(side * KINDS + kindOf(moved, from), from);
+    add(side * KINDS + kindOf(placed, to), to);
+    if ((m & FLAG_CASTLE) !== 0) {
+      const rank = to & 0x70;
+      const kingside = (to & 7) === 6;
+      const slot = side * KINDS + K_ROOK;
+      remove(slot, kingside ? rank + 7 : rank);
+      add(slot, kingside ? rank + 5 : rank + 3);
+    }
+  };
+
+  const pop = (): void => {
+    const mark = marks[--depth]!;
+    while (opCount > mark) {
+      const o = --opCount * 5;
+      const type = ops[o]!;
+      const slot = ops[o + 1]!;
+      if (type === OP_ADD) {
+        len[slot]!--;
+        version[slot] = ops[o + 4]!;
+      } else if (type === OP_REMOVE) {
+        const base = slot * MAX_PER_KIND;
+        const i = ops[o + 2]!;
+        const n = len[slot]!;
+        squares[base + n] = squares[base + i]!;
+        squares[base + i] = ops[o + 3]!;
+        len[slot] = n + 1;
+        version[slot] = ops[o + 4]!;
+      } else {
+        pieceCount[slot]!++; // OP_CAPTURE: `slot` holds the side
+      }
+    }
+  };
+
+  const castlesOf = (p: Position, side: Side): number => {
+    if (p.castling === 0) return 0;
+    const sign = side === WHITE ? 1 : -1;
+    const options = CASTLES[side]!;
+    let bits = 0;
+    for (let i = 0; i < options.length; i++) {
+      const c = options[i]!;
+      if (
+        (p.castling & c.right) !== 0 &&
+        p.board[c.kingHome] === sign * KING &&
+        p.board[c.rookHome] === sign * ROOK
+      ) {
+        bits |= 1 << i;
+      }
+    }
+    return bits;
+  };
+
+  const evaluate = (p: Position, out: Int32Array): boolean => {
+    castles[WHITE] = castlesOf(p, WHITE);
+    castles[BLACK] = castlesOf(p, BLACK);
+    const white = sideBound(WHITE);
+    if (white === Infinity) return false;
+    const black = sideBound(BLACK);
+    if (black === Infinity) return false;
+    out[0] = white;
+    out[1] = black;
+    return true;
+  };
+
+  const reset = (p: Position): void => {
     len.fill(0);
     pieceCount[0] = 0;
     pieceCount[1] = 0;
+    opCount = 0;
+    depth = 0;
+    for (let slot = 0; slot < 2 * KINDS; slot++) version[slot] = nextVersion++;
     const b = p.board;
     for (let sq = 0; sq < 120; sq++) {
       if ((sq & 0x88) !== 0) {
@@ -219,14 +402,9 @@ export function createBoundFn(t: Target): BoundFn {
       }
       pieceCount[side]!++;
     }
-    const white = sideBound(p, WHITE);
-    if (white === Infinity) return false;
-    const black = sideBound(p, BLACK);
-    if (black === Infinity) return false;
-    out[0] = white;
-    out[1] = black;
-    return true;
   };
+
+  return { reset, push, pop, evaluate };
 }
 
 /** Convenience wrapper returning an object (tests, analysis); the search uses createBoundFn. */
@@ -236,16 +414,28 @@ export function createLowerBound(t: Target): (p: Position) => Bound | null {
   return (p) => (fn(p, out) ? { white: out[0]!, black: out[1]! } : null);
 }
 
-/** Distance with the castling shortcuts for a king on its home square or a rook in its corner. */
-function pieceDistance(p: Position, side: Side, kind: number, from: number, to: number): number {
-  let d = distance(kind, side, from, to);
-  if ((kind !== K_KING && kind !== K_ROOK) || p.castling === 0) return d;
-  const sign = side === WHITE ? 1 : -1;
-  for (const c of CASTLES[side]!) {
-    if ((p.castling & c.right) === 0) continue;
-    if (p.board[c.kingHome] !== sign * KING || p.board[c.rookHome] !== sign * ROOK) continue;
-    if (kind === K_KING && from === c.kingHome) d = Math.min(d, 1 + kingDistance(c.kingTo, to));
-    if (kind === K_ROOK && from === c.rookHome) d = Math.min(d, rookDistance(c.rookTo, to));
+/**
+ * Distance with the castling shortcuts for a king on its home square or a rook in its corner.
+ * `castles`: bit i set when castling CASTLES[side][i] is still available (right, king and rook home).
+ */
+function pieceDistance(
+  t: Target,
+  castles: number,
+  side: Side,
+  kind: number,
+  from: number,
+  to: number,
+): number {
+  let d = obstacleDistance(t, kind, side, from, to);
+  if ((kind !== K_KING && kind !== K_ROOK) || castles === 0) return d;
+  const options = CASTLES[side]!;
+  for (let i = 0; i < options.length; i++) {
+    if (((castles >> i) & 1) === 0) continue;
+    const c = options[i]!;
+    if (kind === K_KING && from === c.kingHome)
+      d = Math.min(d, 1 + obstacleDistance(t, kind, side, c.kingTo, to));
+    if (kind === K_ROOK && from === c.rookHome)
+      d = Math.min(d, obstacleDistance(t, kind, side, c.rookTo, to));
   }
   return d;
 }

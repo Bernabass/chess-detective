@@ -2,7 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { squareFromName as sq } from '../../src/index';
 import { WHITE, BLACK } from '../../src/core/board';
 import { createLowerBound } from '../../src/solver/bound';
-import { knightDistance, parseTarget, pawnDistance, type Target } from '../../src/solver/target';
+import {
+  K_KING,
+  K_LIGHT_BISHOP,
+  K_ROOK,
+  knightDistance,
+  obstacleDistance,
+  parseTarget,
+  pawnDistance,
+  rookDistance,
+  type Target,
+} from '../../src/solver/target';
 import { fen } from '../helpers';
 
 function target(key: string): Target {
@@ -45,6 +55,25 @@ describe('empty-board distances (SPEC §6.3)', () => {
     expect(knightDistance(sq('b1'), sq('d4'))).toBe(3);
     expect(knightDistance(sq('a1'), sq('b2'))).toBe(4);
     expect(knightDistance(sq('a1'), sq('h8'))).toBe(6);
+  });
+});
+
+describe('frozen-pawn distances', () => {
+  it('route pieces around target pawns that never left their starting square', () => {
+    // Every white pawn at home except b2: a2 is frozen, so the a1 rook goes round by b1 and b3.
+    const t = target('rnbqkbnr/pppppppp/8/8/8/1P6/P1PPPPPP/RNBQKBNR b');
+    expect(rookDistance(sq('a1'), sq('a3'))).toBe(1);
+    expect(obstacleDistance(t, K_ROOK, WHITE, sq('a1'), sq('a3'))).toBe(3);
+    // The f1 bishop is shut in by e2 and g2.
+    expect(obstacleDistance(t, K_LIGHT_BISHOP, WHITE, sq('f1'), sq('c4'))).toBe(Infinity);
+    // A frozen pawn's own square can't be anyone's destination, and other pieces are no obstacle.
+    expect(obstacleDistance(t, K_KING, WHITE, sq('e1'), sq('e2'))).toBe(Infinity);
+    expect(obstacleDistance(t, K_ROOK, WHITE, sq('h1'), sq('h1'))).toBe(0);
+  });
+
+  it('make the bound see a locked-in piece', () => {
+    // The target needs the f1 bishop on c4 while e2 and g2 never moved: impossible.
+    expect(bound(START, 'rnbqkbnr/pppppppp/8/8/2B5/8/PPPPPPPP/RNBQK1NR w')).toBeNull();
   });
 });
 
