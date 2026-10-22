@@ -28,12 +28,17 @@ export class Position {
   hashLo = 0;
   /** Number of moves on the undo stack. */
   ply = 0;
-  undo = new Int32Array(UNDO_STRIDE * 128);
+  undo: Int32Array;
+
+  /** `undoCapacity` is a starting size in moves; the stack grows when needed. */
+  constructor(undoCapacity = 128) {
+    this.undo = new Int32Array(UNDO_STRIDE * Math.max(1, undoCapacity));
+  }
 }
 
 /** An independent copy, including the undo stack (so the copy can unmake earlier moves too). */
 export function clonePosition(p: Position): Position {
-  const q = new Position();
+  const q = new Position(p.ply + 16);
   q.board.set(p.board);
   q.turn = p.turn;
   q.castling = p.castling;
@@ -45,6 +50,6 @@ export function clonePosition(p: Position): Position {
   q.hashHi = p.hashHi;
   q.hashLo = p.hashLo;
   q.ply = p.ply;
-  q.undo = p.undo.slice();
+  q.undo.set(p.undo.subarray(0, p.ply * UNDO_STRIDE));
   return q;
 }

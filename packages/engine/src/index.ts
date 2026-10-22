@@ -6,7 +6,7 @@ import { isAttacked, findCheckers } from './core/attacks';
 import type { Position } from './core/position';
 
 /** Engine version, recorded with every generated puzzle. Keep in sync with package.json. */
-export const ENGINE_VERSION = '0.1.0';
+export const ENGINE_VERSION = '0.2.0';
 
 export type Color = 'w' | 'b';
 
@@ -48,3 +48,12 @@ export function isSquareAttacked(p: Position, square: number, by: Color): boolea
 export function checkers(p: Position): number[] {
   return findCheckers(p);
 }
+
+export type { Finding, RuleId, Severity } from './retro/findings';
+export { staticFindings } from './retro/rules';
+export type { Retraction, RetractionKind } from './retro/retract';
+export { retractions } from './retro/retract';
+export type { LastMove, LastMovesOptions, LastMovesResult, Viability } from './retro/lastmoves';
+export { lastMoves } from './retro/lastmoves';
+export type { AnalysisReport, AnalyzeOptions, Verdict } from './retro/analyze';
+export { analyzePosition } from './retro/analyze';

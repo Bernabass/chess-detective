@@ -52,25 +52,20 @@ export function isAttacked(board: Int8Array, sq: number, by: Side): boolean {
   return false;
 }
 
-/** Squares of the pieces giving check to the side to move (empty if not in check or no king). */
-export function findCheckers(p: Position): number[] {
-  const king = p.kingSquare[p.turn]!;
+/** Squares of all pieces of `by` that attack `sq`, in ascending order. */
+export function attackersOf(board: Int8Array, sq: number, by: Side): number[] {
   const result: number[] = [];
-  if (king < 0) return result;
-  const b = p.board;
-  const by: Side = p.turn === WHITE ? 1 : 0;
   const sign = by === WHITE ? 1 : -1;
-
-  for (const s of by === WHITE ? [king - 15, king - 17] : [king + 15, king + 17]) {
-    if ((s & 0x88) === 0 && b[s] === sign * PAWN) result.push(s);
+  for (const s of by === WHITE ? [sq - 15, sq - 17] : [sq + 15, sq + 17]) {
+    if ((s & 0x88) === 0 && board[s] === sign * PAWN) result.push(s);
   }
   for (const d of KNIGHT_STEPS) {
-    const s = king + d;
-    if ((s & 0x88) === 0 && b[s] === sign * KNIGHT) result.push(s);
+    const s = sq + d;
+    if ((s & 0x88) === 0 && board[s] === sign * KNIGHT) result.push(s);
   }
   for (const d of KING_STEPS) {
-    const s = king + d;
-    if ((s & 0x88) === 0 && b[s] === sign * KING) result.push(s);
+    const s = sq + d;
+    if ((s & 0x88) === 0 && board[s] === sign * KING) result.push(s);
   }
   const rays: [readonly number[], number][] = [
     [ROOK_STEPS, ROOK],
@@ -78,8 +73,8 @@ export function findCheckers(p: Position): number[] {
   ];
   for (const [steps, slider] of rays) {
     for (const d of steps) {
-      for (let s = king + d; (s & 0x88) === 0; s += d) {
-        const v = b[s];
+      for (let s = sq + d; (s & 0x88) === 0; s += d) {
+        const v = board[s];
         if (v !== 0) {
           if (v === sign * slider || v === sign * QUEEN) result.push(s);
           break;
@@ -88,4 +83,11 @@ export function findCheckers(p: Position): number[] {
     }
   }
   return result.sort((x, y) => x - y);
+}
+
+/** Squares of the pieces giving check to the side to move (empty if not in check or no king). */
+export function findCheckers(p: Position): number[] {
+  const king = p.kingSquare[p.turn]!;
+  if (king < 0) return [];
+  return attackersOf(p.board, king, p.turn === WHITE ? 1 : 0);
 }
