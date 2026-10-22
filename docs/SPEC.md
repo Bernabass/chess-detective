@@ -346,7 +346,7 @@ Castling rights simplification: a normal retraction copies P's castling rights i
 | `4k3/8/8/8/8/8/8/4K3 w - e6 0 1` | illegal: `EN_PASSANT_INCONSISTENT` |
 | `rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2` | legal, proof `e2e4 e7e5`. Written with `-`, so …e7-e5 must still be listed as a possible last move (§5.3 step 3). |
 | `8/8/8/8/8/8/8/K6k w - - 0 1` | undecided (needs a long proof game) |
-| `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1` | undecided in v1. It's actually illegal by a knight-parity argument (only knights can move and return, and a knight returning home always uses an even number of moves, so White can't have made one more move than Black). Proving it is stretch rule `PARITY` (§5.6). Use this example in `docs/learning`. |
+| `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1` | undecided in v1. It's actually illegal by a parity argument (with every pawn home, only knights can move, plus a rook into a vacated knight square; every trip back home takes an even number of moves, so White can't have made one more move than Black). Proving it is stretch rule `PARITY` (§5.6). Use this example in `docs/learning`. |
 
 Claude Code should construct the remaining fixtures and verify each one by reasoning in its comment, plus by the solver where possible.
 

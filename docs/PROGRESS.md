@@ -8,7 +8,7 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 |---|---|---|---|
 | 0 | Foundations | done (2026-10-22) | `phase-0` |
 | 1 | Engine core | done (2026-10-22) | `phase-1` |
-| 2 | Retro analysis | not started | |
+| 2 | Retro analysis | done (2026-10-22) | `phase-2` |
 | 3 | Proof-game solver | not started | |
 | 4 | Puzzle generator | not started | |
 | 5 | Web shell and Lab | not started | |
@@ -28,6 +28,70 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 | Lighthouse accessibility, /daily and /lab | | |
 
 ## Phase log
+
+### Phase 2: Retro analysis (2026-10-22)
+
+**Done, by acceptance criterion**
+- **Every §5.2 rule, with trigger and non-trigger tests.**
+  - All 16 rules from SPEC §5.2 plus the owner-approved `NO_POSSIBLE_HISTORY`, each with plain-English messages and highlight squares (plus arrows for forced moves). Code: `packages/engine/src/retro/rules.ts`, `pawns.ts`, `analyze.ts`.
+  - Pawn accounting uses an exact bitmask dynamic program, and a maximum matching whose Hall-violating group is named in `PAWN_STRUCTURE_IMPOSSIBLE` messages.
+  - Tests: `test/retro/rules.test.ts` (trigger and silent cases per rule, silence on 8 real-game positions), `pawns.test.ts`, `lastmoves.test.ts`.
+- **Completeness and soundness, 2,000 fast / 50,000 slow.**
+  - Completeness: for every legal move from each random position P (giving Q), `retractions(Q)` must contain P with only the unknowable fields left out. Checked for Q as played, Q with `-` for en passant, and Q with `-` for castling.
+  - Soundness: every retraction of every visited position is confirmed independently with the full move generator.
+  - Split into 4 files each (fast 4 × 500, slow 4 × 12,500) so they run in parallel.
+- **At least 30 curated fixtures, including the §5.5 table.** `test/fixtures/positions.json` has 37 positions, each with a reasoning comment: all 10 from §5.5, every illegal rule, deductions, a forced last move, a missing last move, a depth-2 dead end, castling claims, un-castling, unpromotion and un-en-passant. Every fixture's proof game was replayed by both the engine and python-chess.
+- **`lastMoves` with depth and limits; `LAST_MOVE_FORCED` and `NO_POSSIBLE_LAST_MOVE` tested.** Viability is three-state (viable / not viable / unknown), with node, time and stop limits, and claims are made only from definite results. Tests cover depth changing the verdict, limits producing `unknown` without claims, forced moves (including the "possibly en passant" wording), and the silent cases.
+- **`pnpm --filter @retrograde/engine fixtures` writes `fixtures/replay-vectors.json`.**
+  - 520 legal games (251 castles, 73 en passant captures, 317 promotions of which 248 underpromotions) and 132 illegal ones covering 6 kinds.
+  - Generation is deterministic (a regenerated file is byte-identical), and python-chess agrees on all 652 games.
+  - An engine test fails if the file goes stale.
+- Also:
+  - Owner decisions folded into SPEC §5 and DECISIONS.md: stated castling rights constrain the last move, `NO_POSSIBLE_HISTORY`, three-state viability, bitmask DP plus Hall group.
+  - A new property test checks `analyzePosition` on real-game positions: never "illegal", and a forced move is always the move that was played.
+  - Engine version 0.2.0.
+
+**Evidence**
+- `pnpm check`: all green. Engine unit tests: 14 files, 240 tests, statements 94.53% (coverage measured on unit tests). Engine property tests: 6 files, 15 tests. Web 3/3, generator 1/1, golangci-lint `0 issues`, Go tests ok, hook test passed.
+- `pnpm --filter @retrograde/engine test:slow` (1,106 s, run alongside the review agent): 12/12 passed. Every perft count at depth 5, start position at depth 6 = 119,060,324, 400 long random games, and completeness/soundness over 4 × 12,500 positions. The new slow analyzer-claims property ran separately after the review fixes: 1/1 passed (3,000+ real-game positions at depth 3, as played and with `-` fields; 846 s).
+- **Self-review** (separate review agent): no soundness bugs. Its probes found 0 failures over 75,285 moves from 4,000 hand-built positions, and no false "illegal" or wrong forced move in 1,828 real-game positions. Fixed:
+  - A forced move that could be en passant *or* an ordinary capture was reported as definitely en passant (a false deduction). Now it reads "capturing a black pawn (possibly en passant), …", with a regression test.
+  - Added the analyzer-claims property test (fast and slow).
+  - Added "does not fire" tests for `LAST_MOVE_FORCED` and `CAPTURES_REQUIRED`.
+  - Property failures now print their seed (see DECISIONS.md).
+  - Corrected the parity explanation in SPEC, the fixtures and the learning note.
+  - Lazy prior positions now pick "the first king" in the same order as `parseFen`.
+
+**Known issues / follow-ups**
+- Positions that are legal can only be reported as "undecided" until the Phase 3 solver finds proof games. The "legal" fixtures assert "not illegal" now, and Phase 3 tightens them to `legal`.
+- `pnpm check` takes about 1 minute (the engine's property tests are about 40 s of it). The slow suite takes about 15–20 minutes and runs nightly in CI.
+- The `NO_POSSIBLE_HISTORY` message says "checked 3 moves deep", following SPEC's example text, but the depth counts single moves (plies), not move pairs.
+
+**How to try it** (VS Code terminal, PowerShell, in the project folder)
+
+1. Run the engine's fast tests (unit tests with coverage, then the property tests):
+   ```powershell
+   pnpm --filter @retrograde/engine test
+   ```
+   Expect `Tests  240 passed` with `Statements : 94.53%`, then `Tests  15 passed`.
+2. Ask the analyzer about some positions:
+   ```powershell
+   cd packages/engine
+   npx tsx -e "import { analyzePosition, parseFen } from './src/index'; for (const f of ['7k/8/8/8/8/8/PPP5/KB6 b - - 0 1', 'k7/8/8/8/8/PP6/PP6/K7 w - - 0 1', '6k1/4Kppp/8/8/8/8/8/8 w - - 0 1', 'r3k2r/pppp1ppp/4p3/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1']) { const p = parseFen(f); if (p.ok) { const r = analyzePosition(p.value); console.log(f, '->', r.verdict.kind); for (const x of r.verdict.findings) console.log('   ', x.rule + ':', x.message); } }"
+   cd ../..
+   ```
+   You should see:
+   - "There's no move White could have just played to reach this position." (the walled-in king);
+   - "3 white pawns (a2, b2, a3) could only have started on the a- and b-files, so the pawn on a3 has no possible starting file.";
+   - "Black's last move must have been …Kh8-g8, possibly capturing a white knight, bishop, rook or queen.";
+   - the `NO_POSSIBLE_HISTORY` message for the last position.
+3. Regenerate the cross-language replay vectors (should leave no diff):
+   ```powershell
+   pnpm --filter @retrograde/engine fixtures
+   git status --short fixtures
+   ```
+4. Optional, about 15–20 minutes: `pnpm --filter @retrograde/engine test:slow` should end with every test passed.
+5. `pnpm check` should pass.
 
 ### Phase 1: Engine core (2026-10-22)
 

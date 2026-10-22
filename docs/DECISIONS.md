@@ -127,3 +127,23 @@ Append-only. Each entry: date, context, decision, consequences. Newest at the bo
   6. **"Legal" fixtures before the solver.** In Phase 2, fixtures whose expected verdict is `legal` assert "not illegal" plus their specific last moves. Phase 3 tightens them to `legal` with a proof.
   7. **Unknowable fields of prior positions.** Prior positions get halfmove clock 0 and a move number one lower when Black is the retractor (minimum 1). `analyzePosition` defaults to depth 3, 2,000 ms and 200,000 nodes. Viability is cached by an exact key (placement, side, castling, en passant), never by hash alone.
 - Consequences: More positions are recognised as illegal (via castling claims and deeper dead ends), and nothing is claimed beyond what was fully searched.
+
+## 2026-10-22: Phase 2 implementation choices
+- **Test layout for speed.**
+  - The engine's `test` script runs the unit tests with coverage (94% statements on their own), then the property tests without coverage. Coverage instrumentation made the property tests about 3x slower, and `pnpm check` went from about 44 s to 112 s.
+  - The completeness and soundness property tests are split into four files (fast: 4 × 500 positions; slow: 4 × 12,500) so Vitest runs them in parallel.
+  - Soundness is checked for every retraction of every visited random position (2,000 fast / 50,000 slow). Completeness is checked for every legal move from each of those positions.
+- **Random play** (`src/util/random-game.ts`, shared by tests and the fixture script) favours en passant ×40, castling ×20, promotions ×10 (underpromotions ×15), captures ×3, pawn pushes ×3 and moves off the back rank ×3. Without the last two, 500-position samples sometimes contained no promotion or no castling. The Phase 4 generator tunes its own weights (SPEC §7.2).
+- **Retraction generator internals.**
+  - Candidates are tested on one scratch position: apply at most four square changes, check, revert.
+  - The forward check finds the move in the piece's pseudo-legal moves, then makes it once to test both legality and the result.
+  - Prior positions are built lazily, on first access.
+  - Together these made `retractions()` about 5x faster.
+  - `clonePosition` now copies only the used part of the undo stack.
+- **Replay vectors** (`fixtures/replay-vectors.json`):
+  - 520 legal games (1–160 plies) and 132 illegal ones covering six kinds: self-check, disallowed castling, a stale move, a needless promotion piece, an unreachable square, and a missing promotion piece. The missing-promotion vectors are taken from promotions actually played, since random plies rarely land on one.
+  - One game per line, so diffs stay readable. The file is ignored by Prettier.
+  - Cross-checked once with python-chess (0 mismatches in 652 games).
+  - An engine test fails if the file is stale or was produced by another engine version.
+- **Seeds in property tests.** The completeness and soundness tests iterate fixed seed ranges directly (each seed is a whole random game, so fast-check's shrinking would only replay games), and every failure message starts with its seed. The analyzer-claims property (random-game positions are never called illegal, and a forced last move names the move played) uses fast-check with a fixed seed, as `.claude/rules/engine.md` asks.
+- **Forced moves that may be en passant.** When a forced last move could be en passant *or* an ordinary capture, the message says "capturing a black pawn (possibly en passant), knight, …". It never claims en passant unless that is the only possibility.
