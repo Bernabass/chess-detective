@@ -451,22 +451,24 @@ The castling move then counts once (through the king), so the bound stays admiss
 ### 7.1 CLI
 
 ```
-generator generate --count 500 --seed 42 --min-plies 5 --max-plies 12 --jobs 4 --out puzzles.jsonl
+generator generate --count 500 --seed 42 --min-plies 5 --max-plies 12 --jobs 4 --out puzzles.jsonl [--source beam|random|both] [--node-limit N]
 generator verify puzzles.jsonl
 generator stats puzzles.jsonl
 ```
 
-`--jobs` uses `worker_threads`. Each candidate index gets a seed derived from `--seed`, and output is sorted by candidate index, so results are deterministic for a given seed, jobs value and engine version.
+`--jobs` uses `worker_threads`. Each candidate index gets a seed derived from `--seed`, and output is sorted by candidate index. Searches are bounded by **node limits, never time limits**, so a candidate's verdict doesn't depend on machine speed, and the output is byte-identical for a given seed and engine version **whatever `--jobs` is**. (Decided 2026-10-22.)
 
 ### 7.2 Pipeline per candidate
 
-1. Sample a random legal game of N plies (N drawn from the allowed range) with **biased move selection** to make interesting puzzles: captures ×3, promotions ×5 (underpromotions ×8), castling ×3, en passant ×6, a piece returning to a square it visited ×2, other moves ×1. Tune these weights and record the final ones in `DECISIONS.md`.
+**Candidate sources** (decided 2026-10-22). Random games are almost never unique beyond about 8 plies, because independent moves can be played in another order. The main source is therefore a **beam search** that grows puzzles one ply at a time from accepted ones. If a game of N + 1 plies is the unique shortest proof game for its target, its first N plies are the unique shortest proof game for that position's full state (placement, side, castling, en passant); for the target key alone this can fail only when the last move is castling or en passant, the only moves whose legality depends on those fields. So every candidate is an accepted puzzle plus one legal move. The frontier is kept diverse: at most 3 children per parent, at most W/15 puzzles sharing a 4-ply prefix, a preference for captures, promotions, castling, en passant, switchbacks and checks, and no lines where a side's last three moves are quiet king moves. Random-game sampling (step 1 below) remains a second source, and covers the castling and en passant cases.
+
+1. (Random source) Sample a random legal game of N plies (N drawn from the allowed range) with **biased move selection** to make interesting puzzles: captures ×3, promotions ×5 (underpromotions ×8), castling ×3, en passant ×6, a piece returning to a square it visited ×2, other moves ×1. Tune these weights and record the final ones in `DECISIONS.md`.
 2. Target = `targetKey` of the final position.
-3. **Shortest:** `count` at N − 2, N − 4, … down to the lower bound must all be 0.
-4. **Unique:** `count` at N with `cap = 2` must be exactly 1 with status `complete`.
+3. **Unique:** `count` at N with `cap = 2` must be exactly 1 with status `complete`. This runs first because it fails most often and stops as soon as it finds a second solution; running the exhaustive shortest checks first would make every shortest-but-not-unique candidate pay for them. (Decided 2026-10-22.)
+4. **Shortest:** `count` at N − 2, N − 4, … down to the lower bound must all be 0 with status `complete`.
 5. Detect features and compute difficulty (§7.3); emit a record.
 
-Candidates that hit a limit are discarded, never emitted. `stats` reports acceptance rate and time per candidate by N.
+Candidates that hit a limit are discarded, never emitted. `stats` reports acceptance rate and time per candidate by N. The final pool is chosen from the accepted puzzles with per-ply quotas (about 15% at 5–6 plies, 28% at 7–8, 15% at 9, 28% at 10–11, 14% at 12) and at most 3 puzzles sharing a 6-ply prefix.
 
 ### 7.3 Features and difficulty
 

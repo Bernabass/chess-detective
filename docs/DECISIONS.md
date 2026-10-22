@@ -166,3 +166,15 @@ Append-only. Each entry: date, context, decision, consequences. Newest at the bo
 - **Pawn matching shortcut.** A pawn already on a target pawn square is matched to it before the bitmask DP. This is exact: an exchange argument shows some cheapest matching contains every such pair, because pawn distance obeys the triangle inequality (going through the target square is a valid path). It made pawn-heavy bounds about 4x faster.
 - **Allocation-free bound on cache hits.** It uses typed arrays and dedicated 1- and 2-piece paths, with no closures on the hot path (the TypeScript runner wraps every closure creation in a helper call). The general assignment DP only runs with 3+ pieces of one kind, which needs promotions.
 - **Test layout.** Heavier solver checks (brute force at N ≤ 4, random targets to N = 10, the tiny-table count, limits) live in `*properties*` files, which run without coverage instrumentation. The 50,000-node progress test, 100,000-game admissibility and N = 5 brute force are in the slow suite. `pnpm check` measured 100 s.
+
+## 2026-10-22: Phase 4 generator decisions
+- Context: Writing the Phase 4 plan. The owner approved all of the following; SPEC §7.1 and §7.2 hold the settled versions.
+- Decision:
+  1. **Beam search as the main candidate source.** Puzzles grow one ply at a time from accepted puzzles. The basis: a prefix of a unique shortest proof game is the unique shortest proof game for its full position, and for the target key the argument fails only when the last move is castling or en passant. The frontier is diverse (child and prefix caps), favours tactical and special moves, and excludes plain king walks. §7.2's biased random games remain a second source.
+  2. **Every candidate is still verified fully by the solver**, uniqueness first (it fails most often and stops at the second solution), then the exhaustive shortest checks. Only `complete` results count.
+  3. **Node limits, never time limits**, so output is byte-identical for a seed and engine version whatever `--jobs` is.
+  4. **Measure before building.** Before the pool is built, the checks are timed on real candidates per ply count and the total time projected; the incremental bound comes first if that projection is too slow (over about 1 hour on 4 jobs, or a shortest-check p95 over about 2 s at any N).
+  5. **External check.** The brute force for N ≤ 5 is compared with wismuth.com's diagram statistics. There a "diagram" is the 64 squares only, but with exactly N plies from the start the side to move is fixed by parity, so per N it equals our target key. "Uniquely realizable" means exactly one N-ply game (no shortest requirement); we report our "unique shortest" count beside it.
+  6. **Pool selection** uses per-ply quotas and at most 3 puzzles per 6-ply prefix. The end-of-phase report shows 2 sample puzzles per star level (target FEN, plies, solution in SAN).
+  7. CLAUDE.md's generator command gets its missing `generate` subcommand (Phase 0 item 8).
+- Consequences: The 4–5 star levels become reachable; output is reproducible on any machine and any job count.
