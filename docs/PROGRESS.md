@@ -10,7 +10,7 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 | 1 | Engine core | done (2026-10-22) | `phase-1` |
 | 2 | Retro analysis | done (2026-10-22) | `phase-2` |
 | 3 | Proof-game solver | done (2026-10-22) | `phase-3` |
-| 4 | Puzzle generator | not started | |
+| 4 | Puzzle generator | done (2026-10-23) | `phase-4` |
 | 5 | Web shell and Lab | not started | |
 | 6 | API core | not started | |
 | 7 | Daily UI, leaderboards, profiles, archive | not started | |
@@ -23,11 +23,130 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 |---|---|---|
 | Perft nodes/second (Node, start position depth 5) | ≈4.0M nodes/s (median of 3 runs: 3.4M, 4.0M, 4.2M); Kiwipete depth 4: 5.4M. Node 24.13, owner's Windows 10 machine, `pnpm --filter @retrograde/engine perft 5` | 2026-10-22 |
 | Solver median / p95 at N = 6, 8, 10 | find-one: 2 / 6 ms, 2 / 11 ms, 4 / 191 ms. count (cap 2): 2 / 5 ms, 2 / 33 ms, 2 / 167 ms (worst 436 ms). Median nodes 7–14. 50 targets of uniformly random games per N, `pnpm --filter @retrograde/engine bench` | 2026-10-22 |
-| Generator acceptance rate and time per puzzle by N | | |
+| Generator acceptance rate and time per candidate by N | Beam (W = 180, 200,000-node limit, `--jobs 4`), accepted / candidates and mean ms per candidate per job: N = 6: 68% / 20 ms, 7: 79% / 123 ms, 8: 58% / 282 ms, 9: 59% / 1.2 s, 10: 35% / 2.6 s, 11: 28% / 3.9 s, 12: 14% / 4.1 s. Whole 500-puzzle pool: 72 min; `verify` of the pool: 227 s. Heavy 8-ply uniqueness count (118,811 nodes): 2,328 ms with engine 0.3.0 → 1,250 ms with the incremental bound | 2026-10-23 |
 | Main-thread JS bundle (gzipped) | | |
 | Lighthouse accessibility, /daily and /lab | | |
 
 ## Phase log
+
+### Phase 4: Puzzle generator (2026-10-23)
+
+**Done, by acceptance criterion**
+- **`generate`, `verify` and `stats` work; output is deterministic for a seed.**
+  - CLI: `apps/generator/src/main.ts` (SPEC §7.1).
+  - `generate` grows candidates with a beam search (prefix property, diverse frontier) plus biased random games. Each candidate is fully verified by the solver: a free transposition test, then uniqueness, then the shortest checks. The pool is chosen by ply quotas with at most 3 puzzles per 6-ply prefix, scored, and given stars by rank.
+  - `test/generate.test.ts` checks the output is byte-identical for `--jobs 1` and `--jobs 2` (real worker threads) and differs for another seed.
+- **Every emitted puzzle passes `verify`.** `verify` replays each solution and re-runs uniqueness and shortest. It also recomputes features, score and stars.
+  - `pnpm --filter @retrograde/generator start -- verify data/puzzles-v1.jsonl --jobs 4` → `ok: 500 puzzles verified` (227 s).
+  - Tests: `verify` on a committed 20-puzzle fixture, plus a tampered-record test.
+  - `verifyCandidate` against brute force on 479 sampled 4-ply targets.
+  - The prefix property on random games the beam didn't build.
+- **A pool of ≥ 500 puzzles covering all 5 levels with the weekly-ramp cut points**, committed as `data/puzzles-v1.jsonl` (137 KB, seed 1), with its generation report in `data/puzzles-v1.jsonl.stats.json`.
+  - Distribution: ★ 71, ★★ 143, ★★★ 143, ★★★★ 72, ★★★★★ 71 (needed: ≥ 53 / 105 / 105 / 53 / 53).
+  - Puzzles per ply count:
+
+    | Plies | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+    |---|---|---|---|---|---|---|---|
+    | Puzzles | 75 | 95 | 54 | 75 | 52 | 79 | 70 |
+
+  - Quotas: all filled except 10–11 plies, 131 of 140; shorter puzzles topped up the rest.
+  - Diversity: 12 different first moves, 38 two-ply openings, 220 six-ply prefixes, at most 3 per prefix.
+- **Owner's additions.**
+  - Uniqueness runs before the shortest checks (`verify.ts`).
+  - Speed was measured first, and the incremental bound came first (see Measurements and DECISIONS).
+  - The external check reproduces wismuth.com's diagram table: N ≤ 4 in the fast suite, N = 5 in the slow suite.
+  - Sample puzzles are below.
+- Also:
+  - Engine 0.4.0: incremental bound, frozen-pawn distances, pooled tables, one-ply shortcut, `minimumPlies`. Replay vectors were regenerated; only `engineVersion` changed.
+  - `stats --samples N`.
+  - CLAUDE.md's generator command is fixed.
+
+**External check (wismuth.com, diagram table)**
+
+A "diagram" there is the 64 squares only. With exactly N plies the side to move follows from parity, so per N it is our target key. Brute-force counts:
+
+| N | Diagrams (= wismuth) | Uniquely realizable (= wismuth) | Ours: unique **and** shortest |
+|---|---|---|---|
+| 0 | 1 | 1 | 1 |
+| 1 | 20 | 20 | 20 |
+| 2 | 400 | 400 | 400 |
+| 3 | 5,362 | 1,862 | 1,862 |
+| 4 | 71,852 | 9,373 | 9,309 |
+| 5 | 815,677 | 51,323 | 51,187 |
+
+At N = 4, 64 diagrams have exactly one 4-ply game but are also reached in 2 plies (e.g. 1.a3 a6 2.a4 a5, versus 1.a4 a5).
+
+**Sample puzzles: 2 per star level** (from `stats data/puzzles-v1.jsonl --samples 2`)
+
+| Stars | Plies | Target | Solution |
+|---|---|---|---|
+| ★ | 6 | `rnbqkbn1/ppppppp1/8/r7/4P3/8/PPPP1P1P/RNBQKBNR w` | 1.g4 h5 2.gxh5 Rxh5 3.e4 Ra5 |
+| ★ | 6 | `1nbqkbnr/2pppppp/r7/p7/8/4P3/PPPP1PPP/RNBQKBNR w` | 1.e3 b5 2.Bxb5 a5 3.Bf1 Ra6 |
+| ★★ | 7 | `1r1qkbnr/pbpppppp/8/8/4P3/1P6/P1PP1PPP/RNBQK1NR b` | 1.e4 Na6 2.Bxa6 Rb8 3.Bxb7 Bxb7 4.b3 |
+| ★★ | 7 | `rnbqk1nr/p1ppbp1p/8/1p6/3P4/8/PPP1PPPP/RN1QKBNR b` | 1.d3 g5 2.Bxg5 b5 3.Bxe7 Bxe7 4.d4 |
+| ★★★ | 9 | `1nbqkbnr/2pppppp/8/Rp6/6P1/8/2PPPP1P/1NBQKBNR b` | 1.b4 a5 2.bxa5 Rxa5 3.g4 Rxa2 4.Rxa2 b5 5.Ra5 |
+| ★★★ | 9 | `r1bqkbnr/pppnppp1/8/8/2P1P3/8/PP1P1PPP/RNB1K1NR b` | 1.e4 h5 2.Qxh5 Rxh5 3.Bb5 Rh8 4.Bxd7+ Nxd7 5.c4 |
+| ★★★★ | 11 | `1Qq1kbnr/p1ppp1pp/b7/1p6/8/4P3/PPPP1PPP/RNB1K1NR b` | 1.e3 b5 2.Bc4 Ba6 3.Bxf7+ Kxf7 4.Qf3+ Ke8 5.Qxa8 Qc8 6.Qxb8 |
+| ★★★★ | 12 | `r2qkbnr/p3pppp/8/2pp4/8/4P2P/PPPPKP1P/RNB1Q1NR w` | 1.e3 Na6 2.Bxa6 d5 3.Bxb7 Bxb7 4.Ke2 Bc8 5.Qe1 Bh3 6.gxh3 c5 |
+| ★★★★★ | 11 | `rn1qkbnr/pp1bpp1p/8/8/5P2/8/PPP1P1PP/RN2KBNR b` | 1.d4 c5 2.Bh6 cxd4 3.Bxg7 Bxg7 4.Qxd4 Bf8 5.Qxd7+ Bxd7 6.f4 |
+| ★★★★★ | 12 | `rn2kbnr/ppp1pppp/8/8/8/8/PPQPPP1P/RNB2bK1 w` | 1.c4 d5 2.cxd5 Qxd5 3.Nh3 Qxg2 4.Bxg2 Bxh3 5.O-O Bxg2 6.Qc2 Bxf1 |
+
+**Evidence**
+- `pnpm check`: all green.
+  - Time: 110–150 s, varying by run on this laptop after hours at full load. Warm steps: lint 17 s, typecheck 9 s, tests 77–93 s, Go 6 s, hooks 1 s. Phase 4 added about 8 s: incremental-bound checks, the wismuth N ≤ 4 test and the generator tests.
+  - Engine unit tests: 16 files, 266 tests, statements 93.1%. Engine property tests: 10 files, 36 tests.
+  - Generator: 7 files, 37 tests. Web 3/3, golangci-lint `0 issues`, Go tests ok, hook test passed.
+- `test:slow` (1,861 s, slowed by the review agent running in parallel): 14 files, 30 tests passed. That includes 100,000 games of admissibility, now with the incremental bound compared against a fresh one at every position, and the wismuth N = 5 check. That check alone takes 34 s.
+- Pool run: `generate --count 500 --seed 1 --jobs 4` took 4,294 s (72 min) on the owner's laptop (i5-6300U, 2 cores / 4 threads). Per-ply acceptance is in `data/puzzles-v1.jsonl.stats.json` and in `stats`.
+- **Self-review** (separate review agent): no soundness bugs in the incremental bound, the frozen-pawn distances, the one-ply shortcut, the table pool, the transposition pre-check or determinism.
+  - Its independent checks:
+    - incremental bound against fresh at 240,000 positions of deep random push/pop walks (657 castlings, 383 en passant, 770 promotions);
+    - `solveFrom` against brute force on 62,068 targets from 150 mid-game starts;
+    - the pool's stars, prefix caps and line endings;
+    - 16 long puzzles re-verified;
+    - `--jobs 1` vs `--jobs 3` byte-identical.
+  - Fixed:
+    - `--min-plies` / `--max-plies` outside 5–12 silently dropped those lengths. They now stretch the nearest quota, with a test.
+    - CLAUDE.md's example command would have taken over an hour; it now uses a quick configuration and explains that cost depends on width and length, not count.
+    - The fixture now includes an 11- and a 12-ply puzzle.
+    - `king-walk` counted both kings together; it now counts per side.
+    - A worker that exits without an error event no longer hangs `verify`.
+    - Added a determinism test where searches hit the node limit.
+    - Seeds above 2^31 − 1 are rejected.
+    - Stale table sizes (17 MB, not 13 MB) and two wrong statements in the docs are corrected.
+  - The pool was re-verified after the fixes: `ok: 500 puzzles verified`.
+
+**Known issues / follow-ups**
+- **Every puzzle has a capture; none has a promotion, en passant or phoenix.** The beam's interest score and the pool's "highest score first" both reward captures. Promotions and en passant are rare at ≤ 12 plies, and the random source, which could add them, accepts only about 0.15% of its games. If the samples feel samey, the next lever is the pool's selection (spread scores within each quota rather than taking the top).
+- **About 72 minutes per pool on this laptop**, over the plan's ~1 hour guideline. At N ≥ 10, 25–55% of candidates hit the 200,000-node limit and are discarded. So long puzzles are biased toward ones the solver proves quickly, and the 10–11-ply quota fell 9 short.
+- ★ puzzles are all 6 plies: the 5–6 quota takes the best-scoring, and 6-ply games score higher than 5-ply ones.
+- `.claude/rules/engine.md` says the solver *and generator* accept `timeLimitMs` and `shouldStop`. The generator deliberately takes only node limits (determinism, DECISIONS 2026-10-22). The rule's wording should be updated; I left the rules file for you to change.
+- The fast incremental-bound test checks one-level push/pop. The nightly suite runs it on all 100,000 games; a nested random walk (like the reviewer's stress script) would be a cheap addition.
+
+**How to try it** (VS Code terminal, PowerShell, in the project folder)
+
+1. Summarize the committed pool and show sample puzzles:
+   ```powershell
+   pnpm --filter @retrograde/generator start -- stats data/puzzles-v1.jsonl --samples 2
+   ```
+   You should see `500 puzzles`, the tables above, and 2 puzzles per star level with their solutions in SAN.
+2. Re-verify the whole pool (about 4 minutes with 4 workers):
+   ```powershell
+   pnpm --filter @retrograde/generator start -- verify data/puzzles-v1.jsonl --jobs 4
+   ```
+   It should end with `ok: 500 puzzles verified`.
+3. Generate a small pool of your own (about 35 seconds):
+   ```powershell
+   pnpm --filter @retrograde/generator start -- generate --count 30 --seed 7 --max-plies 8 --width 40 --jobs 4 --out my-puzzles.jsonl
+   pnpm --filter @retrograde/generator start -- stats my-puzzles.jsonl --samples 1
+   ```
+   You should see per-ply progress lines, then a `30 puzzles` summary. Running it again gives a byte-identical file. Delete `my-puzzles.jsonl` and `my-puzzles.jsonl.stats.json` afterwards.
+4. Regenerate the committed pool (about 72 minutes; output identical to `data/puzzles-v1.jsonl` with engine 0.4.0):
+   ```powershell
+   pnpm --filter @retrograde/generator start -- generate --count 500 --seed 1 --jobs 4 --out data/puzzles-v1.jsonl
+   ```
+5. Run the generator's tests: `pnpm --filter @retrograde/generator test` should end with `Tests  37 passed`.
+6. `pnpm check` should pass.
 
 ### Phase 3: Proof-game solver (2026-10-22)
 

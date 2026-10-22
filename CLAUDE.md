@@ -31,7 +31,7 @@ Chess detective puzzles built on **retrograde analysis**: players reason *backwa
 - `pnpm test:e2e`: Playwright end-to-end tests (from Phase 5)
 - `pnpm gen`: regenerate sqlc code, Go server stubs and TS API types from `api/openapi.yaml`
 - `pnpm db:migrate`: apply database migrations; `pnpm seed`: load puzzles and schedule dailies for local use (from Phase 6)
-- `pnpm --filter @retrograde/generator start -- --count 50 --seed 1`: generate puzzles
+- `pnpm --filter @retrograde/generator start -- generate --count 30 --seed 7 --max-plies 8 --width 40 --jobs 4 --out puzzles.jsonl`: generate a small pool in under a minute (`verify` / `stats <file>` check and summarize a file; paths are relative to where you run it). The beam's cost depends on `--width` and `--max-plies`, not `--count`: the full committed pool (`--count 500 --seed 1 --jobs 4`, defaults otherwise) takes about 72 minutes.
 
 ## Development environment (IMPORTANT)
 - The owner develops on **Windows 10 in VS Code** with the Claude Code extension. Everything must work there first, and also on Linux (CI).

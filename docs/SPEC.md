@@ -451,16 +451,18 @@ The castling move then counts once (through the king), so the bound stays admiss
 ### 7.1 CLI
 
 ```
-generator generate --count 500 --seed 42 --min-plies 5 --max-plies 12 --jobs 4 --out puzzles.jsonl [--source beam|random|both] [--node-limit N]
+generator generate --count 500 --seed 42 --min-plies 5 --max-plies 12 --jobs 4 --out puzzles.jsonl [--source beam|random|both] [--node-limit N] [--width W] [--children C] [--random R]
 generator verify puzzles.jsonl
 generator stats puzzles.jsonl
 ```
+
+Defaults: `--node-limit 200000`, `--width 180`, `--children 8`, `--random` 4 × count, `--jobs 1`. `generate` also writes `<out>.stats.json` (per-ply acceptance and timings); it is separate so the JSONL itself stays byte-identical across runs. `verify` replays every solution, re-runs the solver checks and recomputes features, score and stars. (Decided 2026-10-23.)
 
 `--jobs` uses `worker_threads`. Each candidate index gets a seed derived from `--seed`, and output is sorted by candidate index. Searches are bounded by **node limits, never time limits**, so a candidate's verdict doesn't depend on machine speed, and the output is byte-identical for a given seed and engine version **whatever `--jobs` is**. (Decided 2026-10-22.)
 
 ### 7.2 Pipeline per candidate
 
-**Candidate sources** (decided 2026-10-22). Random games are almost never unique beyond about 8 plies, because independent moves can be played in another order. The main source is therefore a **beam search** that grows puzzles one ply at a time from accepted ones. If a game of N + 1 plies is the unique shortest proof game for its target, its first N plies are the unique shortest proof game for that position's full state (placement, side, castling, en passant); for the target key alone this can fail only when the last move is castling or en passant, the only moves whose legality depends on those fields. So every candidate is an accepted puzzle plus one legal move. The frontier is kept diverse: at most 3 children per parent, at most W/15 puzzles sharing a 4-ply prefix, a preference for captures, promotions, castling, en passant, switchbacks and checks, and no lines where a side's last three moves are quiet king moves. Random-game sampling (step 1 below) remains a second source, and covers the castling and en passant cases.
+**Candidate sources** (decided 2026-10-22). Random games are almost never unique beyond about 8 plies, because independent moves can be played in another order. The main source is therefore a **beam search** that grows puzzles one ply at a time from accepted ones. If a game of N + 1 plies is the unique shortest proof game for its target, its first N plies are the unique shortest proof game for that position's full state (placement, side, castling, en passant); for the target key alone this can fail only when the last move is castling or en passant, the only moves whose legality depends on those fields. So every candidate is an accepted puzzle plus one legal move. Per parent, extensions whose last move could have been played at an earlier turn of the same side (a free, sound non-uniqueness test) are dropped, and the 8 most interesting of the rest are verified (more while the frontier is small, about W × 8 per ply). The frontier (W = 180) is kept diverse: at most max(3, W / parents) children per parent; at most W/6, W/12, W/15 and 2 puzzles sharing their first 1, 2, 4 and 6 plies (the last so the pool's prefix cap below can be met at every length); a preference for captures, promotions, castling, en passant, switchbacks and checks, and no lines where a side's last three moves are quiet king moves. (Details decided 2026-10-23.) Random-game sampling (step 1 below) remains a second source. The beam still verifies castling and en passant extensions, but it can miss a puzzle ending in one whose prefix isn't unique; random games can find those, though rarely (none of the 500 in `data/puzzles-v1.jsonl`).
 
 1. (Random source) Sample a random legal game of N plies (N drawn from the allowed range) with **biased move selection** to make interesting puzzles: captures ×3, promotions ×5 (underpromotions ×8), castling ×3, en passant ×6, a piece returning to a square it visited ×2, other moves ×1. Tune these weights and record the final ones in `DECISIONS.md`.
 2. Target = `targetKey` of the final position.
@@ -468,14 +470,16 @@ generator stats puzzles.jsonl
 4. **Shortest:** `count` at N − 2, N − 4, … down to the lower bound must all be 0 with status `complete`.
 5. Detect features and compute difficulty (§7.3); emit a record.
 
-Candidates that hit a limit are discarded, never emitted. `stats` reports acceptance rate and time per candidate by N. The final pool is chosen from the accepted puzzles with per-ply quotas (about 15% at 5–6 plies, 28% at 7–8, 15% at 9, 28% at 10–11, 14% at 12) and at most 3 puzzles sharing a 6-ply prefix.
+Candidates that hit a limit are discarded, never emitted. `stats` reports acceptance rate and time per candidate by N. The final pool is chosen from the accepted puzzles with per-ply quotas (about 15% at 5–6 plies, 28% at 7–8, 15% at 9, 28% at 10–11, 14% at 12) and at most 3 puzzles sharing a 6-ply prefix, highest scores first. Quotas are filled longest first, because long puzzles are scarce and share prefixes with shorter ones.
 
 ### 7.3 Features and difficulty
 
-Features detected from the solution: `capture`, `promotion`, `underpromotion`, `castling`, `en-passant`, `switchback` (a piece returns to a square it left), `tempo` (a piece wastes moves with a back-and-forth), `king-walk` (king moves ≥ 2 times), `phoenix` (a captured piece type is recreated by promotion).
+Features detected from the solution, following each piece by identity: `capture`, `promotion`, `underpromotion`, `castling`, `en-passant`, `switchback` (a piece returns to a square it left, by another way), `tempo` (a piece goes straight back: A→B→A; counted as tempo, not switchback), `king-walk` (one side's king moves ≥ 2 times, castling not counted), `phoenix` (a side promotes to a piece type of which an original, unpromoted piece of that side is captured in the game).
 
 Difficulty, a starting formula to tune with real data:
-`score = plies + 1.5·(captures) + 3·promotions + 4·underpromotions + 2·castling + 3·enPassant + 2·switchbacks + 2·tempo + log2(solverNodesFindOne) / 4`
+`score = plies + 1.5·(captures) + 3·promotions + 4·underpromotions + 2·castling + 3·enPassant + 2·switchbacks + 2·tempo + log2(solverNodes) / 4`, rounded to 2 decimals.
+
+`solverNodes` is the node count of the uniqueness check (count at N with cap 2): how much work it takes to see there is exactly one game. (Originally the nodes of a separate find-one search; changed 2026-10-23 to save that search.)
 
 The score maps to 1–5 stars by quantiles of the generated pool, with cut points chosen to match the weekly ramp (§8.7): the lowest 1/7 of scores is ★, up to 3/7 is ★★, up to 5/7 is ★★★, up to 6/7 is ★★★★, and the top 1/7 is ★★★★★. So the pool's level mix matches how often each level is scheduled (★ 1 day a week, ★★ 2, ★★★ 2, ★★★★ 1, ★★★★★ 1). Rough intended ply ranges: ★ 5–6, ★★ 7–8, ★★★ 8–9, ★★★★ 10–11, ★★★★★ 12 or special features.
 
@@ -485,7 +489,7 @@ The score maps to 1–5 stars by quantiles of the generated pool, with cut point
 {"id":"g42-000137","plies":2,"target":"rnbqkb1r/pppppppp/5n2/8/8/5N2/PPPPPPPP/RNBQKB1R w","solution":["g1f3","g8f6"],"features":[],"difficulty":1,"score":2.0,"solverNodes":41,"engineVersion":"0.4.0","seed":42}
 ```
 
-(A valid but deliberately tiny example: 1.Nf3 Nf6 is the only 2-ply game reaching that position. Real puzzles use 5–12+ plies, and the numeric fields here are made up.)
+(A valid but deliberately tiny example: 1.Nf3 Nf6 is the only 2-ply game reaching that position. Real puzzles use 5–12+ plies, and the numeric fields here are made up.) Ids are `g{seed}-{index}` with the candidate index zero-padded to 6 digits; random-source candidates are indexed from 1,000,000. Lines are sorted by index.
 
 ### 7.5 Content policy
 
