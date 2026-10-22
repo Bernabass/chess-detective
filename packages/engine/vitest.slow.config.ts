@@ -4,8 +4,6 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['test/**/*.slow.test.ts'],
-    // No slow tests yet; deep perft runs come with move generation.
-    passWithNoTests: true,
     testTimeout: 0,
   },
 });
