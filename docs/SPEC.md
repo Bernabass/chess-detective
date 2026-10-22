@@ -282,6 +282,7 @@ Each rule has a `RuleId`, a test that triggers it and a test that it stays silen
 | `CASTLING_RIGHTS_INCONSISTENT` | illegal | Every claimed castling right has king and rook on their original squares | "The FEN says White can castle kingside, but the white king is on f1." |
 | `EN_PASSANT_INCONSISTENT` | illegal | En passant square set ⇒ the matching pawn just double-pushed: pawn on rank 4/5 behind the square, ep square and the pawn's start square empty, side to move matches | |
 | `NO_POSSIBLE_LAST_MOVE` | illegal | Not the initial position, and no viable retraction at depth 1 (§5.4) | "There's no move Black could have just played to reach this position." |
+| `NO_POSSIBLE_HISTORY` | illegal | There are viable retractions at depth 1, but at the analysed depth k > 1 every one of them is definitely not viable (§5.4) | "Every move White could have just played leads back to a position with no possible last move (checked 3 moves deep)." |
 | `PROMOTED_PIECE_REQUIRED` | deduction | Same formula as `PROMOTION_EXCESS` > 0 | "At least one white bishop is a promoted pawn: White has two dark-squared bishops." |
 | `CAPTURES_REQUIRED` | deduction | Lower bound of captures by each side's pawns > 0 | "White's pawns made at least 2 captures." |
 | `CASTLING_LOST` | deduction | King or rook not on its original square | "White can no longer castle kingside: the h1 rook has moved." |
@@ -292,8 +293,8 @@ Each rule has a `RuleId`, a test that triggers it and a test that it stays silen
 Every pawn starts on its own file. Each file change needs one capture. For one color:
 - Let the current pawns be p₁..pₖ (k ≤ 8) and the starting files be a..h.
 - Cost of assigning pawn pᵢ on file f to starting file s is `|f − s|`. It's infinite if the pawn couldn't have reached its rank from rank 2 (rank 7 for Black) with that many file changes: the file distance must be ≤ the rank distance travelled.
-- Min-cost assignment of pawns to distinct starting files (Hungarian algorithm; matrix is at most 8×8) gives the minimum number of captures by those pawns.
-- If no assignment with finite cost exists, the position is illegal by `PAWN_STRUCTURE_IMPOSSIBLE`. Example: white pawns on a2, b2, a3, b3. The a3 pawn could only have started on the a- or b-file, and both of those pawns are still on rank 2. The message names a pawn that has no possible starting file (a pawn left unmatched by a maximum matching on the finite-cost edges).
+- Min-cost assignment of pawns to distinct starting files gives the minimum number of captures by those pawns. With at most 8 pawns and 8 files it's computed exactly by dynamic programming over bitmasks of used files: `best[mask]` is the cheapest way to assign the first `popcount(mask)` pawns to the files in `mask` (at most 2⁸ states × 8 files). (Decided 2026-10-22; replaces the Hungarian algorithm, same result, simpler code.)
+- If no assignment with finite cost exists, the position is illegal by `PAWN_STRUCTURE_IMPOSSIBLE`. A maximum matching on the finite-cost edges leaves some pawn X unmatched; following alternating paths from X gives a group S of pawns whose possible files N(S) number exactly |S| − 1, a violation of Hall's condition. The message names X and that group, and highlights the whole group, e.g. "3 white pawns (a2, b2, a3) could only have started on the a- and b-files, so the pawn on a3 has no possible starting file." Example position: white pawns on a2, b2, a3, b3.
 - If that minimum exceeds the opponent's missing pieces (16 − opponent piece count), the position is illegal by `PAWN_CAPTURES_EXCEED_MISSING`.
 
 This ignores promoted pawns and pieces captured by non-pawns. That's a relaxation, so the bound stays valid. A tighter version is a stretch goal (§5.6).
@@ -313,16 +314,18 @@ The retractor is the side not to move in P. For each retractor piece:
 Validity of each candidate prior position P′:
 1. In P′ it's the retractor's turn, so the opponent's king must not be in check in P′.
 2. If P has an en passant square, the only valid retraction is the matching double push.
-3. **Confirm by forward generation.** Generate legal moves in P′ and check that one of them produces P: compare placement and side to move, and compare the en passant square **only when P states one**. An en passant field of `-` means "not stated", not "the last move wasn't a double push" (many FENs, including hand-typed ones, write `-` after a double push). Rule 2 already handles the case where P states one. This guarantees soundness by construction. (Decided 2026-10-22.)
+3. **Confirm by forward generation.** Generate the legal moves of the moved piece in P′ (the moves from its square, plus castling for a king) and check that one of them produces P: compare placement and side to move; compare the en passant square **only when P states one**; and require the move to keep **every castling right P states** (rights after the move ⊇ rights of P). Stated castling rights and a stated en passant square are claims about the history; `-` claims nothing. An en passant field of `-` means "not stated", not "the last move wasn't a double push" (many FENs, including hand-typed ones, write `-` after a double push). Rule 2 already handles the case where P states one. This guarantees soundness by construction; the soundness property test (§5.5) checks it independently with the full legal move generator. (Decided 2026-10-22.)
 
-Castling rights simplification: a normal retraction copies P's castling rights into P′. P′ might have had more rights, but the extra rights can't be known and don't affect other retractions. Log this in `DECISIONS.md`.
+Castling rights simplification: a normal retraction copies P's castling rights into P′ (an un-castling adds the right it used). P′ might have had more rights, but the extra rights can't be known and don't affect other retractions. Likewise P′ has no en passant square unless the retraction is an un-en-passant, its halfmove clock is 0, and its move number is one less when Black is the retractor (never below 1).
 
 ### 5.4 Last-move analysis
 
 `lastMoves(p, { depth, timeLimitMs, nodeLimit, shouldStop })`:
 - A retraction to P′ is **viable at depth k** (k ≥ 1) if P′ passes every static rule *except* `NO_POSSIBLE_LAST_MOVE` (that rule is defined by viability, so including it would be circular), **and** one of these holds: k = 1; P′ is the initial position; or P′ has a retraction that is viable at depth k−1. (Decided 2026-10-22, see `DECISIONS.md`.)
 - Output: every depth-1 retraction with its viability at the requested depth, described in words ("White's last move could have been Bf1xb5, capturing a black knight").
-- No viable retraction at any depth ⇒ illegal (sound, since retractions are complete and static rules are sound). Exactly one distinct move (UCI) among the viable retractions ⇒ `LAST_MOVE_FORCED`. If that move has several viable un-captures, the message lists the possible captured pieces ("…capturing a knight or a bishop").
+- Each retraction's viability is **viable**, **not viable** or **unknown** (a time, node or stop limit cut the search short). Depth 1 needs only the static rules, so it is always decided.
+- No viable retraction at depth 1 ⇒ `NO_POSSIBLE_LAST_MOVE`. Viable retractions at depth 1 but every one definitely not viable at the requested depth k > 1 ⇒ `NO_POSSIBLE_HISTORY` (sound, since retractions are complete and static rules are sound). Exactly one distinct move (UCI) among the viable retractions, with every other retraction definitely not viable ⇒ `LAST_MOVE_FORCED`. If that move has several viable un-captures, the message lists the possible captured pieces ("…capturing a knight or a bishop"). Nothing is claimed from an unknown result.
+- Results are cached by an exact key (placement, side to move, castling rights, en passant square), never by hash alone, so a hash collision can't produce a false claim.
 - Halfmove clocks, repetition and the 50/75-move rules are ignored.
 
 ### 5.5 Tests

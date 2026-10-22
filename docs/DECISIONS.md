@@ -115,3 +115,15 @@ Append-only. Each entry: date, context, decision, consequences. Newest at the bo
 - **Property-test sizes.** The fast suite plays 20 seeded random games of up to 120 plies (over 1,500 positions, checking every legal move in each). The slow suite plays 400 games of up to 200 plies. Random play favours en passant, castling and promotions, and the fast test asserts each one actually happens.
 - **Positions with several kings of one colour** (illegal, but the Lab can show them): legality is judged against one tracked king per side, the first one found when parsing. Castling additionally checks its own destination square, so it never lands on an attacked square whichever king is tracked. The property tests run random play from such positions to make sure nothing crashes and every invariant still holds.
 - **SAN reading** rejects an `x` on a move that captures nothing (`Nxf3` from the start position). All other leniencies are listed in `sanToMove`'s doc comment.
+
+## 2026-10-22: Phase 2 retro-analysis decisions
+- Context: Writing the Phase 2 plan. The owner approved all of the following; SPEC §5.2, §5.2.1, §5.3 and §5.4 now hold the settled versions.
+- Decision:
+  1. **Stated castling rights constrain the last move.** The forward check in §5.3 step 3 requires the move to keep every castling right the position states. A stated right says king and rook never moved, so they can't have made the last move. This mirrors the en passant rule: stated fields are claims, `-` claims nothing.
+  2. **`NO_POSSIBLE_HISTORY`** (illegal) is a new rule for "every possible last move leads back to a dead end within the analysed depth". `NO_POSSIBLE_LAST_MOVE` stays the depth-1 rule.
+  3. **Three-state viability.** Results are viable, not viable or unknown (limit hit). Claims (`NO_POSSIBLE_HISTORY`, `LAST_MOVE_FORCED`) are made only from definite results. Depth 1 is always decided, so `NO_POSSIBLE_LAST_MOVE` is too.
+  4. **Pawn matching** uses an exact bitmask dynamic program instead of the Hungarian algorithm (same minimum, simpler code, at most 2^8 x 8 steps), plus a maximum matching whose alternating paths give the Hall-violating group named in `PAWN_STRUCTURE_IMPOSSIBLE` messages.
+  5. **Faster forward check.** It generates only the moved piece's legal moves (plus castling for a king) instead of all of P′'s. It is still forward generation, so still sound. The soundness property test uses the full generator independently.
+  6. **"Legal" fixtures before the solver.** In Phase 2, fixtures whose expected verdict is `legal` assert "not illegal" plus their specific last moves. Phase 3 tightens them to `legal` with a proof.
+  7. **Unknowable fields of prior positions.** Prior positions get halfmove clock 0 and a move number one lower when Black is the retractor (minimum 1). `analyzePosition` defaults to depth 3, 2,000 ms and 200,000 nodes. Viability is cached by an exact key (placement, side, castling, en passant), never by hash alone.
+- Consequences: More positions are recognised as illegal (via castling claims and deeper dead ends), and nothing is claimed beyond what was fully searched.
