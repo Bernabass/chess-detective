@@ -6,6 +6,7 @@ LICENSE
 **/*.md
 # Generated code.
 fixtures/
+data/
 **/*.gen.ts
 apps/web/src/api/schema.d.ts
 services/api/internal/**/*.gen.go
