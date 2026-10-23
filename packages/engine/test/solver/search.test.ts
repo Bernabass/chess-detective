@@ -66,6 +66,18 @@ describe('solveProofGame', () => {
 });
 
 describe('shortestProofGame', () => {
+  it('reports progress with the length it is searching, at the start of each length', () => {
+    // The start position with Black to move: lengths 1, 3, 5 are searched (no proof exists).
+    const seen: { plies: number; nodes: number }[] = [];
+    const r = shortestProofGame('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b', 5, {
+      onProgress: (p) => seen.push({ plies: p.plies, nodes: p.nodes }),
+    });
+    expect(r.searched).toEqual([1, 3, 5]);
+    expect(seen.map((s) => s.plies)).toEqual([1, 3, 5]);
+    // Node counts are cumulative over the lengths.
+    expect(seen.map((s) => s.nodes)).toEqual([...seen.map((s) => s.nodes)].sort((a, b) => a - b));
+  });
+
   it('finds the shortest proof, starting from the lower bound and the right parity', () => {
     expect(shortestProofGame(AFTER_E4_E5, 10)).toMatchObject({
       status: 'complete',

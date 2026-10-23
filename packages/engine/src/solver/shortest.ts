@@ -63,6 +63,8 @@ export function shortestProofGame(
       return finish();
     }
     tt ??= acquireTable(opts.ttBits ?? defaultTtBits(maxPlies));
+    // Report each new length as it starts, so a UI can say which length is being searched.
+    opts.onProgress?.({ nodes: result.nodes, elapsedMs: elapsed, plies: n });
     const r = solveFrom(
       initialPosition(),
       t,
@@ -79,6 +81,7 @@ export function shortestProofGame(
                 opts.onProgress?.({
                   nodes: result.nodes + prog.nodes,
                   elapsedMs: elapsed + prog.elapsedMs,
+                  plies: n,
                 });
               },
             }),
