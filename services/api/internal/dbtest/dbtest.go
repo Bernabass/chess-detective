@@ -54,6 +54,18 @@ func Store(t testing.TB) (*store.Store, *pgxpool.Pool) {
 	if err != nil {
 		t.Fatalf("connecting to TEST_DATABASE_URL: %v", err)
 	}
+	// The migration creates citext in public "IF NOT EXISTS", which isn't safe when tests (and
+	// test packages, which are separate processes) migrate at the same time on a fresh database.
+	// So create it here first, one at a time under an advisory lock; the migration then finds it.
+	if err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(7466427)"); err != nil {
+			return err //nolint:wrapcheck // reported below
+		}
+		_, err := tx.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS citext SCHEMA public")
+		return err //nolint:wrapcheck // reported below
+	}); err != nil {
+		t.Fatalf("creating the citext extension: %v", err)
+	}
 	if _, err := conn.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
 		t.Fatal(err)
 	}
