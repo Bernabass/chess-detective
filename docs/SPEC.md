@@ -563,13 +563,13 @@ A failed attempt shows `X/6`. With no hints, omit the `🔍n` part.
 ### 8.7 Scheduling and archive
 
 - Weekly difficulty ramp: Mon ★, Tue ★★, Wed ★★, Thu ★★★, Fri ★★★, Sat ★★★★, Sun ★★★★★.
-- `retrograde schedule --from YYYY-MM-DD --days 365` deterministically assigns unscheduled puzzles by weekday difficulty and fails loudly if the pool runs out of a level. It always prints how many unscheduled puzzles of each level remain (after scheduling, or at the point of failure).
+- `retrograde schedule --from YYYY-MM-DD --days 365` deterministically assigns unscheduled puzzles by weekday difficulty (the lowest unscheduled puzzle id of that level; days already scheduled are kept) and fails loudly if the pool runs out of a level. It always prints how many unscheduled puzzles of each level remain (after scheduling, or at the point of failure).
 - A year needs about 53 each of ★, ★★★★ and ★★★★★ and about 105 each of ★★ and ★★★, which is why the pool has at least 500 puzzles with ramp-shaped cut points (§7.3).
 - Puzzles from earlier days are playable in archive mode: same UI, attempts flagged `archive`, excluded from leaderboards and streaks. The solution is still revealed only after finishing.
 
 ### 8.8 Guests
 
-The first request without a session creates a guest player and an anonymous session cookie. Guests play the daily and appear on no leaderboard. When a guest registers or signs in, their attempts move to the account for any puzzle the account hasn't played yet (§10.6).
+Starting a puzzle (`POST /daily/{number}/start`) without a session creates a guest player and an anonymous session cookie; reading a puzzle (`GET`) creates nothing. Guests play the daily and appear on no leaderboard. Guest players older than 30 days with no guesses are deleted by the cleanup job, along with expired sessions. (Decided 2026-10-23.) When a guest registers or signs in, their attempts move to the account for any puzzle the account hasn't played yet (§10.6).
 
 ---
 
@@ -618,7 +618,7 @@ The engine worker is exposed with Comlink: `analyze(fen)`, `lastMoves(fen, depth
 | `HOST` | `127.0.0.1` (default), `0.0.0.0` in a container | Listen address. The default keeps the dev server private to the machine (no Windows firewall prompt). |
 | `PORT` | `8080` | |
 | `BASE_URL` | `http://localhost:5173` in dev | Used for redirects, origin checks, share links |
-| `LAUNCH_DATE` | `2026-11-01` | Puzzle #1 date (UTC) |
+| `LAUNCH_DATE` | `2026-11-01` | Puzzle #1 date (UTC); `number = days since LAUNCH_DATE + 1`, and nothing is scheduled before it. Local development: `pnpm seed` sets it to 14 days before today when `.env` doesn't have it. |
 | `COOKIE_SECURE` | `true` in production | |
 | `LICHESS_BASE_URL` | `https://lichess.org` | Overridable for tests |
 | `LICHESS_CLIENT_ID` | `retrograde` | Lichess PKCE needs no registration; any stable id works (verify in Lichess docs) |
@@ -728,8 +728,9 @@ All paths are under `/api`. JSON in and out; errors use `application/problem+jso
 | `POST /auth/logout` | session | Deletes the session |
 | `GET /auth/lichess/start?return_to=` | none | 302 to Lichess authorize URL (§10.6) |
 | `GET /auth/lichess/callback` | none | Completes OAuth, 302 to `return_to` |
-| `GET /daily` | creates guest session if missing | Today's puzzle: `{number, day, plies, target, difficulty, attempt: {status, guesses[{moves, feedback}], hintsUsed, hints[]}, solution?}` (`solution` only when finished) |
-| `GET /daily/{number}` | creates guest session if missing | Same shape for an archive puzzle (number ≤ today's) |
+| `GET /daily` | session optional; creates nothing | Today's puzzle: `{number, day, plies, target, difficulty, attempt?: {status, guesses[{moves, feedback}], hintsUsed, hints[]}, solution?}` (`attempt` only if the caller has started this puzzle; `solution` only when finished) |
+| `GET /daily/{number}` | session optional; creates nothing | Same shape for an archive puzzle (number ≤ today's) |
+| `POST /daily/{number}/start` | creates guest session if missing | Starts the caller's attempt (`started_at`), idempotent; returns the same shape as `GET`. Rate limit 300 per IP per hour. (Decided 2026-10-23.) |
 | `POST /daily/{number}/guesses` | session | `{moves: string[]}` → `{feedback, status, solution?}` |
 | `POST /daily/{number}/hints` | session | Next hint → `{hintIndex, hint}` |
 | `GET /leaderboards/daily/{number}?limit=100` | none | Top entries + the caller's own rank if signed in |
@@ -740,7 +741,7 @@ All paths are under `/api`. JSON in and out; errors use `application/problem+jso
 ### 10.5 Guess submission (one transaction)
 
 1. Reject a request body with more than 40 moves (400) before touching the database. Resolve the puzzle by number; reject future numbers (404).
-2. Get or create the attempt; `SELECT … FOR UPDATE` the attempt row. `is_archive = number < today's number` is fixed when the attempt is created and never recomputed, so an attempt started before 00:00 UTC and finished after it still counts as a daily (not archive) attempt, and its solve counts for the **puzzle's own day** (streaks and the daily leaderboard).
+2. Load the attempt created by `POST /daily/{number}/start` (409 if the puzzle hasn't been started); `SELECT … FOR UPDATE` the attempt row. `is_archive = number < today's number` is fixed when the attempt is created and never recomputed, so an attempt started before 00:00 UTC and finished after it still counts as a daily (not archive) attempt, and its solve counts for the **puzzle's own day** (streaks and the daily leaderboard).
 3. Reject if the attempt is finished (409) or already has 6 guesses (409).
 4. Validate input: exactly the puzzle's `plies` moves (422 otherwise), each matching `^[a-h][1-8][a-h][1-8][qrbn]?$`. Replay through `chessrules`; an illegal move gives 422 with the ply index.
 5. Compute feedback (§8.3). Solved if the replayed target key equals the target.
@@ -759,7 +760,7 @@ All paths are under `/api`. JSON in and out; errors use `application/problem+jso
   3. GET `/api/account` with the bearer token to read the Lichess `id` and `username`.
   4. Revoke the token right away (DELETE `/api/token`). We never store Lichess tokens.
   5. Find the user by `lichess_user_id` or create one. Use the Lichess username if free, else append a numeric suffix. Merge the guest, create the session, redirect to `return_to`.
-- **Rate limits** (in-memory token buckets, injected, not global): login/register 10 per minute per IP and per username; guesses and hints 30 per minute per player; OAuth start 10 per minute per IP. The client IP comes from `X-Forwarded-For` only when the request arrives from an address in `TRUSTED_PROXIES` (§10.2).
+- **Rate limits** (in-memory token buckets, injected, not global): login/register 10 per minute per IP and per username; guesses and hints 30 per minute per player; `POST /daily/{number}/start` 300 per hour per IP (generous, because many users share an IP); OAuth start 10 per minute per IP. The client IP comes from `X-Forwarded-For` only when the request arrives from an address in `TRUSTED_PROXIES` (§10.2).
 
 ### 10.7 Leaderboards
 
