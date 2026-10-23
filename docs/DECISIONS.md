@@ -250,6 +250,7 @@ Append-only. Each entry: date, context, decision, consequences. Newest at the bo
   - **Copy link and Open in Lichess** (owner's addition). Lichess's board editor URL is `https://lichess.org/editor/<FEN with spaces as underscores>`.
   - **Stale report:** while a new analysis runs, the previous report stays visible but dimmed and `inert`, so nothing in it can act on the wrong position.
   - **No auto-castle:** chessground's `autoCastle` is off; a king dragged two squares moves alone.
+  - **Remeasure on pointer-down:** chessground refreshes its cached board position only on scroll and resize, so after a layout shift (late web fonts) it could drop pieces on the wrong square. The board clears that cache on every pointer-down and before a palette drag (found by a flaky CI run after the `phase-5` tag; regression test in `lab.spec.ts`).
   - **Broken worker:** a worker that fails to load or crashes rejects its pending calls instead of hanging.
   - **Prove announcements:** screen readers hear only the length being searched and the outcome, not every node-count update.
   - The pages that need the API are explanatory placeholders. Login and register show the disabled form layout.

@@ -117,6 +117,12 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
     - Cancel is followed by a second Prove;
     - click-to-place is tested with the board flipped.
 
+**After tagging `phase-5`**
+- The first CI run with e2e passed with one *flaky* test: click-to-place once also dropped a queen on c6.
+- Cause: chessground caches the board's screen position and refreshes it on scroll and resize only. When the web fonts finished loading, the page title grew and the board moved down, so the stale position mapped the pointer to the wrong square.
+- Fix: the board remeasures whenever a pointer goes down on it, and before a palette drag. A regression test shifts the layout on purpose. Without the fix the piece lands on a7 instead of a8; with it the test passes 5 out of 5.
+- The fix is in the commit after the tag (the tag isn't moved). `pnpm test:e2e`: 36 passed.
+
 **Known issues / follow-ups**
 - Lighthouse scores aren't recorded yet (planned with Phase 9's production server); axe covers the same accessibility rules in the e2e suite.
 - The Go server doesn't serve the web app yet (Phase 9 Dockerfile), so deep links like `/lab?fen=…` work in `pnpm dev` / `vite preview` only.
@@ -143,7 +149,7 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
    pnpm test:e2e
    pnpm --filter @retrograde/web shots                              # optional: screenshots into apps/web/screenshots/
    ```
-   Expect `35 passed`. `pnpm check` should pass in about 75 s.
+   Expect `36 passed`. `pnpm check` should pass in about 75 s.
 ### Phase 4: Puzzle generator (2026-10-23)
 
 **Done, by acceptance criterion**
