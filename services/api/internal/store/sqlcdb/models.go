@@ -3,3 +3,132 @@
 //   sqlc v1.31.1
 
 package sqlcdb
+
+import (
+	"database/sql/driver"
+	"fmt"
+	"time"
+)
+
+type AttemptStatus string
+
+const (
+	AttemptStatusInProgress AttemptStatus = "in_progress"
+	AttemptStatusSolved     AttemptStatus = "solved"
+	AttemptStatusFailed     AttemptStatus = "failed"
+)
+
+func (e *AttemptStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AttemptStatus(s)
+	case string:
+		*e = AttemptStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AttemptStatus: %T", src)
+	}
+	return nil
+}
+
+type NullAttemptStatus struct {
+	AttemptStatus AttemptStatus
+	Valid         bool // Valid is true if AttemptStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAttemptStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.AttemptStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AttemptStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAttemptStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AttemptStatus), nil
+}
+
+type Attempt struct {
+	ID          int64
+	PlayerID    int64
+	PuzzleID    int64
+	IsArchive   bool
+	Status      AttemptStatus
+	HintsUsed   int16
+	HintMovePly *int16
+	StartedAt   time.Time
+	FinishedAt  *time.Time
+}
+
+type DailySchedule struct {
+	Day      time.Time
+	Number   int32
+	PuzzleID int64
+}
+
+type Guess struct {
+	AttemptID int64
+	Idx       int16
+	Moves     []string
+	Feedback  string
+	CreatedAt time.Time
+}
+
+type OauthState struct {
+	StateHash    []byte
+	CodeVerifier string
+	PlayerID     *int64
+	ReturnTo     string
+	ExpiresAt    time.Time
+}
+
+type Player struct {
+	ID        int64
+	UserID    *int64
+	CreatedAt time.Time
+}
+
+type PlayerStat struct {
+	PlayerID      int64
+	Played        int32
+	Solved        int32
+	CurrentStreak int32
+	MaxStreak     int32
+	LastSolvedDay *time.Time
+	GuessDist     []int32
+	HintsTotal    int32
+}
+
+type Puzzle struct {
+	ID            int64
+	ExternalID    string
+	Plies         int32
+	Target        string
+	Solution      []string
+	Difficulty    int16
+	Features      []string
+	SolverNodes   int64
+	EngineVersion string
+	CreatedAt     time.Time
+}
+
+type Session struct {
+	TokenHash  []byte
+	PlayerID   int64
+	CreatedAt  time.Time
+	LastSeenAt time.Time
+	ExpiresAt  time.Time
+}
+
+type User struct {
+	ID            int64
+	Username      string
+	PasswordHash  *string
+	LichessUserID *string
+	CreatedAt     time.Time
+}
