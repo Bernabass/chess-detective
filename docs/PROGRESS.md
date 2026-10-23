@@ -92,6 +92,11 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
     - `daily.Ramp` is a function instead of a mutable map;
     - dead code was removed;
     - `TestConcurrentHints` and `TestBodyLimit` were added.
+- **CI caught a race that local runs hid.**
+  - On CI's brand-new database, parallel test schemas all ran the migration's `CREATE EXTENSION IF NOT EXISTS citext` at once, and two failed with a duplicate-key error. Locally the extension already existed.
+  - `dbtest` now creates citext first, under a Postgres advisory lock.
+  - Reproduced locally on a fresh throwaway database with 8 schemas migrating at once: failed in 5 of 5 runs before the fix, 0 of 5 after.
+  - Production is unaffected (it runs one migration at a time).
 - Also fixed during the phase:
   - Timestamps came back in this machine's time zone (`+03:00`). The store now scans `timestamptz` as UTC.
   - The 422 `ply` is 1-based, like the hint plies.
