@@ -743,9 +743,9 @@ All paths are under `/api`. JSON in and out; errors use `application/problem+jso
 1. Reject a request body with more than 40 moves (400) before touching the database. Resolve the puzzle by number; reject future numbers (404).
 2. Load the attempt created by `POST /daily/{number}/start` (409 if the puzzle hasn't been started); `SELECT … FOR UPDATE` the attempt row. `is_archive = number < today's number` is fixed when the attempt is created and never recomputed, so an attempt started before 00:00 UTC and finished after it still counts as a daily (not archive) attempt, and its solve counts for the **puzzle's own day** (streaks and the daily leaderboard).
 3. Reject if the attempt is finished (409) or already has 6 guesses (409).
-4. Validate input: exactly the puzzle's `plies` moves (422 otherwise), each matching `^[a-h][1-8][a-h][1-8][qrbn]?$`. Replay through `chessrules`; an illegal move gives 422 with the ply index.
+4. Validate input: exactly the puzzle's `plies` moves (422 otherwise), each matching `^[a-h][1-8][a-h][1-8][qrbn]?$`. Replay through `chessrules`; an illegal or malformed move gives 422 with its 1-based `ply`. A rejected guess doesn't use one of the six.
 5. Compute feedback (§8.3). Solved if the replayed target key equals the target.
-6. Insert the guess. If solved, or failed on guess 6, set the status and `finished_at`, then update `player_stats` (skip streaks and leaderboards for archive attempts).
+6. Insert the guess. If solved, or failed on guess 6, set the status and `finished_at`, then recompute `player_stats` (archive attempts count in no stats, streaks or leaderboards; DECISIONS 2026-10-23).
 7. Return feedback and status, plus the solution only if the attempt just finished.
 
 ### 10.6 Authentication

@@ -12,7 +12,7 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 | 3 | Proof-game solver | done (2026-10-22) | `phase-3` |
 | 4 | Puzzle generator | done (2026-10-23) | `phase-4` |
 | 5 | Web shell and Lab | done (2026-10-23) | `phase-5` |
-| 6 | API core | not started | |
+| 6 | API core | done (2026-10-23) | `phase-6` |
 | 7 | Daily UI, leaderboards, profiles, archive | not started | |
 | 8 | Sign in with Lichess | not started | |
 | 9 | Polish and ship | not started | |
@@ -28,6 +28,119 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 | Lighthouse accessibility, /daily and /lab | | |
 
 ## Phase log
+
+### Phase 6: API core (2026-10-23)
+
+**Done, by acceptance criterion**
+- **Go replay matches `fixtures/replay-vectors.json`** (built first, as you asked).
+  - `internal/chessrules` wraps `corentings/chess/v2` v2.6.0 (MIT, GPL-compatible).
+  - It agrees with the engine on all 652 vectors: 520 legal games (final position and the SAN of every move) and 132 illegal ones (rejected at the right ply). No disagreement was found.
+  - Test: `TestReplayMatchesEngineVectors`.
+- **Migrations for §10.3; `import-puzzles` (idempotent) and `schedule`.**
+  - `00002_schema.sql` adds the full data model, plus `hint_move_ply`, `hints_total` and indexes (DECISIONS).
+  - `import-puzzles` replays every solution and is all or nothing.
+  - `schedule` follows the weekly ramp, is all or nothing, rejects days before `LAUNCH_DATE`, and always prints the pool left.
+  - Tests: `TestImportIsIdempotent`, `TestImportRejectsABadSolutionAtomically`, `TestSchedule`, `TestQueriesUseIndexes` (`EXPLAIN` with sequential scans off).
+- **Every §10.4 endpoint except Lichess, matching `openapi.yaml`.**
+  - The Go strict server and the TypeScript types are generated from the contract, and every request is validated against it (kin-openapi).
+  - `GET`s create nothing (your change 2); `POST /daily/{n}/start` is idempotent.
+  - Tests: `TestGetCreatesNothing`, `TestStart`, plus one or more integration tests for every endpoint.
+- **Guests, register, login, logout, guest merge, session rotation.**
+  - Passwords: argon2id. Session cookie: HttpOnly, SameSite=Lax. Only the sha256 of each token is stored, and the expiry slides.
+  - Requests are CSRF-checked (Origin and JSON content type).
+  - Tests: `TestRegisterMergesGuestAndRotates`, `TestLoginLogout`, `TestLoginKeepsTheAccountsOwnAttempt`, `TestCSRF`, `TestSlidingExpiry`, `TestCookieMaxAgeUsesTheClock`, `TestSecurityHeaders`.
+- **Guess submission per §10.5 with feedback vectors; hints; streaks and stats; daily and all-time leaderboards.**
+  - Tests: `TestFeedbackMatchesTheVectors` (14 vectors from the TS reference), `TestGuessFlow`, `TestTranspositionSolves`, `TestSixWrongGuessesFail`, `TestHints` (hint 3 stays stable), `TestStreaksAndAllTime` (crosses midnight with the fake clock), `TestFailureEndsTheStreak`, `TestArchiveAttemptsCountInNoStats`, `TestDailyLeaderboard` (ties and the caller's rank; guests excluded), `TestProfile`, `TestArchive`.
+- **Integration tests for every endpoint, including the no-solution-leak test and concurrent guess submission.**
+  - `TestNoSolutionLeak` scans every response before the end of the attempt.
+  - `TestConcurrentSixthGuess`: one 200, one 409, six guesses stored.
+  - `TestConcurrentHints`: hints 1 and 2, never 1 twice.
+  - Also `TestRateLimits`, `TestRateLimitPerUsername`, `TestBodyLimit`, `TestCleanup` and `TestClientIP`.
+  - Each test runs in a fresh schema of `retrograde_test`, dropped afterwards (0 left over, checked).
+- **`pnpm seed` imports the puzzles and schedules them for local dev** (your change 1).
+  - If `LAUNCH_DATE` is missing, it adds `LAUNCH_DATE=<14 days ago>` to `.env` and says so.
+  - Then it schedules from `LAUNCH_DATE` through 30 days ahead. Running it again changes nothing.
+- **Your additions:**
+  - `pnpm try:api` walks through the daily flow without a UI.
+  - The cleanup (expired sessions; guests older than 30 days with no guesses) runs at startup and then hourly in `serve`, and on demand as `retrograde cleanup`.
+
+**Evidence**
+- `pnpm check`: green in 79 s.
+  - Engine 267 + 34 tests, generator 37, web 42.
+  - golangci-lint `0 issues`; Go unit tests ok; hook test passed.
+- `pnpm test:api`: all 8 Go packages ok (63 top-level tests), 18 s.
+- `pnpm seed` (first run, on your machine):
+  ```
+  seed: LAUNCH_DATE wasn't set, so I added LAUNCH_DATE=2026-10-09 (14 days ago) to .env.
+  imported 500 puzzles (0 already present)
+  scheduled 45 days (0 already scheduled) from 2026-10-09; LAUNCH_DATE 2026-10-09 is puzzle #1
+  unscheduled puzzles left: ★ 65 · ★★ 131 · ★★★ 130 · ★★★★ 65 · ★★★★★ 64
+  seed: done. Scheduled 2026-10-09 to 2026-11-22; today is puzzle #15.
+  ```
+  The second run printed `imported 0 puzzles (500 already present)` and `scheduled 0 days (45 already scheduled)`.
+- `pnpm try:api`: all 11 steps returned the expected status ("All steps returned what was expected."). No temp folder or `retrograde.exe` was left behind.
+- **Self-review** (separate review agent: read-only, reran the checks). Fixed, from its findings:
+  1. The cookie's `Max-Age` used the wall clock instead of the injected clock. The integration tests would have started failing in December 2026. Now uses the clock, with `TestCookieMaxAgeUsesTheClock`.
+  2. A failed daily didn't end the current streak until the next day. It now ends at once; there's a unit test and `TestFailureEndsTheStreak`.
+  3. Client-IP handling behind trusted proxies was untested. `TestClientIP` covers a spoofed `X-Forwarded-For`, multi-hop chains, malformed hops and IPv4-mapped addresses.
+  4. The per-username login limit was untested. `TestRateLimitPerUsername` is case-insensitive.
+  5. `try:api` could leave its server running after an unexpected error (Windows doesn't stop a child with its parent), and it left its temp binary behind. It now always stops the server, waits for it, and refuses to start if port 8091 is busy.
+  6. DECISIONS now lists every new Go module.
+  - Also:
+    - `BASE_URL` with a default port (`:443`) no longer rejects every POST;
+    - `scripts/env.mjs` parses `.env` exactly like Go (BOM, `export`, inline comments);
+    - `daily.Ramp` is a function instead of a mutable map;
+    - dead code was removed;
+    - `TestConcurrentHints` and `TestBodyLimit` were added.
+- Also fixed during the phase:
+  - Timestamps came back in this machine's time zone (`+03:00`). The store now scans `timestamptz` as UTC.
+  - The 422 `ply` is 1-based, like the hint plies.
+
+**Decisions to confirm** (in DECISIONS 2026-10-23)
+- Archive (practice) attempts count in **no** stats: not in played, solved or the distribution either, not just streaks and leaderboards as SPEC §1 / §8.7 say.
+- A failed daily ends the current streak immediately (Wordle-style).
+
+**Known issues / follow-ups**
+- Lichess sign-in is Phase 8 (`oauth_states` and its cleanup already exist).
+- The web app doesn't call the API yet (Phase 7). It must call `POST /daily/{n}/start` before the first guess.
+- `pnpm check` is 79–93 s depending on caches, around the 90 s target.
+
+**How to try it** (VS Code terminal, PowerShell, in the project folder; PostgreSQL running)
+
+1. Load the puzzles (safe to repeat):
+   ```powershell
+   pnpm seed
+   ```
+   You should see `imported … puzzles`, `scheduled … days`, the pool left per difficulty, and `today is puzzle #N`. The first time, it also says it added `LAUNCH_DATE` to `.env`.
+2. Walk through the API:
+   ```powershell
+   pnpm try:api
+   ```
+   It builds and starts its own API on port 8091 (your `pnpm dev` can keep running) and prints 11 numbered steps, each with its request and the JSON response:
+   - a guest gets the puzzle (`GET /api/daily`: no `solution` field);
+   - `start` sets a session cookie (shown as `rg_session=…`, never the token);
+   - an illegal move gets a 422 with `"ply": 1`;
+   - a wrong guess gets feedback like `"XXXXXXXX"`;
+   - the first hint says which pieces moved;
+   - the solving guess gets `"GGGGGGGG"`, `"status": "solved"` and the solution;
+   - registering as `try_…` gets a 201 with `"solved": 1, "currentStreak": 1`;
+   - `/auth/me`, then the daily leaderboard (you're under `"you"`) and the all-time leaderboard.
+
+   It ends with "All steps returned what was expected." Each run adds a `try_…` account to your development database.
+3. Call it by hand (in PowerShell 5.1 `curl` is `Invoke-WebRequest`, so use `curl.exe` or `Invoke-RestMethod`):
+   ```powershell
+   pnpm dev                                   # in one terminal (API on 8080, web on 5173)
+   Invoke-RestMethod http://127.0.0.1:8080/api/daily | ConvertTo-Json -Depth 5
+   curl.exe http://127.0.0.1:8080/api/archive
+   curl.exe "http://127.0.0.1:8080/api/leaderboards/all-time?metric=solved"
+   ```
+   POSTs need `-H "Content-Type: application/json" -H "Origin: http://localhost:5173"`; without them you get a 415 or a 403.
+4. Tests:
+   ```powershell
+   pnpm test:api
+   pnpm check
+   ```
+   Expect every Go package `ok`.
 
 ### Phase 5: Web shell and Lab (2026-10-23)
 
