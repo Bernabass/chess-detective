@@ -66,6 +66,17 @@ jobs:
           git diff --exit-code
           test -z "$(git status --porcelain)"
       - run: pnpm build
+      # End-to-end tests against the production web build (vite build + preview).
+      - name: Install Playwright's Chromium
+        run: pnpm --filter @retrograde/web exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - name: Upload the Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: apps/web/test-results/
+          retention-days: 7
 
   windows:
     name: Windows (install, TS tests, Go unit tests)
