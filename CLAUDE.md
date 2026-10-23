@@ -30,7 +30,8 @@ Chess detective puzzles built on **retrograde analysis**: players reason *backwa
 - `pnpm test:api`: Go unit + integration tests (needs Postgres running)
 - `pnpm test:e2e`: Playwright end-to-end tests against the production web build (first install the browser once: `pnpm --filter @retrograde/web exec playwright install chromium`); `pnpm --filter @retrograde/web shots` takes the review screenshots into `apps/web/screenshots/`
 - `pnpm gen`: regenerate sqlc code, Go server stubs and TS API types from `api/openapi.yaml`
-- `pnpm db:migrate`: apply database migrations; `pnpm seed`: load puzzles and schedule dailies for local use (from Phase 6)
+- `pnpm db:migrate`: apply database migrations; `pnpm seed`: migrate, set `LAUNCH_DATE` in `.env` if missing, load `data/puzzles-v1.jsonl` and schedule dailies through 30 days ahead (idempotent)
+- `pnpm try:api`: build and start a private API on port 8091 and walk through the daily flow (guest, wrong guess, hint, solve, register, leaderboards), printing each response. Needs `pnpm seed` first
 - `pnpm --filter @retrograde/generator start -- generate --count 30 --seed 7 --max-plies 8 --width 40 --jobs 4 --out puzzles.jsonl`: generate a small pool in under a minute (`verify` / `stats <file>` check and summarize a file; paths are relative to where you run it). The beam's cost depends on `--width` and `--max-plies`, not `--count`: the full committed pool (`--count 500 --seed 1 --jobs 4`, defaults otherwise) takes about 72 minutes.
 
 ## Development environment (IMPORTANT)

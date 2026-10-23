@@ -23,6 +23,8 @@
     "test:e2e": "pnpm --filter @retrograde/web test:e2e",
     "gen": "node scripts/gen.mjs",
     "db:migrate": "go -C services/api run ./cmd/retrograde migrate",
+    "seed": "node scripts/seed.mjs",
+    "try:api": "node scripts/try-api.mjs",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
     "build": "pnpm --filter @retrograde/web build && go -C services/api build -o bin/ ./cmd/retrograde"
