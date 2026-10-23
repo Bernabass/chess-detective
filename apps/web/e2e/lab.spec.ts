@@ -95,6 +95,33 @@ test.describe('Lab', () => {
     );
   });
 
+  test('a layout shift after load does not make the board misplace pieces', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 1100 });
+    await page.goto(lab('4k3/8/8/8/8/8/8/4K3 w - - 0 1'));
+    await expect(verdict(page)).toBeVisible();
+    // Simulate a late font load: content above the board grows, the board moves down 60 px, and
+    // neither a scroll nor a resize happens.
+    await page.evaluate(() => {
+      const title = document.querySelector('h1');
+      if (title) title.style.paddingTop = '60px';
+    });
+    // A click on a palette piece (arming click-to-place) must not drop a piece anywhere.
+    await page.getByRole('button', { name: 'Place white queen' }).click();
+    await page.keyboard.press('Escape');
+    await expect(page.getByLabel('FEN', { exact: true })).toHaveValue(
+      /^4k3\/8\/8\/8\/8\/8\/8\/4K3 /,
+    );
+    // A drag lands on the square under the pointer (a8).
+    const box = await page.locator('cg-board').first().boundingBox();
+    const from = await page.getByRole('button', { name: 'Place black rook' }).boundingBox();
+    if (box === null || from === null) throw new Error('no layout');
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 16, box.y + box.height / 16, { steps: 8 });
+    await page.mouse.up();
+    await expect(page.getByLabel('FEN', { exact: true })).toHaveValue(/^r3k3\//);
+  });
+
   test('dragging a piece from the palette onto the board edits the position', async ({ page }) => {
     // Tall enough to see the palette and the whole board at once (a drag can't scroll).
     await page.setViewportSize({ width: 1280, height: 1100 });

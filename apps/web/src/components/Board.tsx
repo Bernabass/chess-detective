@@ -138,7 +138,10 @@ export const Board = forwardRef<BoardHandle, BoardProps>(function Board(
     ref,
     () => ({
       dragNewPiece: (piece, event) => {
-        api.current?.dragNewPiece(piece, event, true);
+        const cg = api.current;
+        if (cg === null) return;
+        cg.state.dom.bounds.clear(); // see remeasure()
+        cg.dragNewPiece(piece, event, true);
       },
       setPiece: (square, piece) => {
         const cg = api.current;
@@ -150,8 +153,16 @@ export const Board = forwardRef<BoardHandle, BoardProps>(function Board(
     [],
   );
 
+  // chessground caches the board's screen position and refreshes it on scroll and resize only.
+  // Layout shifts without either (web fonts loading, content above the board changing) would
+  // make it map the pointer to the wrong square, so remeasure whenever a pointer goes down.
+  const remeasure = (): void => {
+    api.current?.state.dom.bounds.clear();
+  };
+
   return (
     <div
+      onPointerDownCapture={remeasure}
       className="board-frame"
       role={decorative ? undefined : 'img'}
       aria-label={decorative ? undefined : `${label}. ${describePlacement(placement)}`}
