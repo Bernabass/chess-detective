@@ -21,6 +21,290 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The current player
+         * @description A caller without a session is reported as a guest with empty stats.
+         */
+        get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create an account
+         * @description Creates the user, moves the caller's guest attempts to it (for puzzles the new account
+         *     hasn't played, which is all of them), and rotates the session.
+         */
+        post: operations["register"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in
+         * @description Signs in, moves the caller's guest attempts to the account for any puzzle the account
+         *     hasn't played (the rest are deleted), and rotates the session.
+         */
+        post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign out
+         * @description Deletes the session and clears the cookie. Safe to call without a session.
+         */
+        post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/daily": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Today's puzzle
+         * @description Creates nothing. `attempt` is present only if the caller has started this puzzle,
+         *     and `solution` only once that attempt is finished.
+         */
+        get: operations["getToday"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/daily/{number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The daily puzzle's number (#1 is on LAUNCH_DATE). */
+                number: components["parameters"]["Number"];
+            };
+            cookie?: never;
+        };
+        /**
+         * A puzzle by number (today's or an archive puzzle)
+         * @description Same as `GET /daily` for puzzle `number`, which must not be in the future.
+         */
+        get: operations["getPuzzle"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/daily/{number}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The daily puzzle's number (#1 is on LAUNCH_DATE). */
+                number: components["parameters"]["Number"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start (or resume) the caller's attempt
+         * @description The web app calls this when it shows the puzzle. Creates a guest player and session if
+         *     the caller has none, and the attempt with its start time (the leaderboard's clock).
+         *     Idempotent: calling it again returns the same attempt. Puzzles before today's are
+         *     archive attempts (no streaks or leaderboards); that is fixed here, at the start.
+         */
+        post: operations["startPuzzle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/daily/{number}/guesses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The daily puzzle's number (#1 is on LAUNCH_DATE). */
+                number: components["parameters"]["Number"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit a guess
+         * @description A guess is a complete game from the initial position of exactly the puzzle's number of
+         *     plies, in UCI. More than 40 moves is a 400; a wrong length, a malformed move or an
+         *     illegal move is a 422 (with `ply` for the move). A guess on a puzzle that wasn't
+         *     started, or on a finished attempt, or a seventh guess, is a 409. `solution` is present
+         *     only when this guess finishes the attempt.
+         */
+        post: operations["submitGuess"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/daily/{number}/hints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The daily puzzle's number (#1 is on LAUNCH_DATE). */
+                number: components["parameters"]["Number"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take the next hint
+         * @description Hints come in order (movers, captures, one move) and each one counts against the
+         *     player's ranking. 409 if the attempt is finished, wasn't started, or all three hints
+         *     are used.
+         */
+        post: operations["takeHint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/leaderboards/daily/{number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The daily puzzle's number (#1 is on LAUNCH_DATE). */
+                number: components["parameters"]["Number"];
+            };
+            cookie?: never;
+        };
+        /**
+         * A daily puzzle's leaderboard
+         * @description Solved, non-archive attempts of registered players: fewer guesses, then fewer hints,
+         *     then a shorter time. `you` is the caller's own entry, if they are signed in and solved it.
+         */
+        get: operations["getDailyLeaderboard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/leaderboards/all-time": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The all-time leaderboard (top 100) */
+        get: operations["getAllTimeLeaderboard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{username}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: components["schemas"]["Username"];
+            };
+            cookie?: never;
+        };
+        /** A public profile */
+        get: operations["getUser"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Past daily puzzles, newest first
+         * @description 30 per page. `result` is the caller's own result, if they have one.
+         */
+        get: operations["getArchive"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -39,10 +323,155 @@ export interface components {
             status: number;
             detail?: string;
             instance?: string;
+            /** @description For an invalid guess, the 1-based ply of the offending move (like hint plies). */
+            ply?: number;
+        };
+        /** @description An empty JSON object (state-changing requests always send a JSON body). */
+        Empty: Record<string, never>;
+        /** @example holmes_221b */
+        Username: string;
+        Credentials: {
+            username: components["schemas"]["Username"];
+            password: string;
+        };
+        Stats: {
+            played: number;
+            solved: number;
+            /** @description solved / played, 0 when nothing was played. */
+            winRate: number;
+            currentStreak: number;
+            maxStreak: number;
+            /** @description Solves in 1, 2, …, 6 guesses, then failed attempts (7 entries). */
+            guessDistribution: number[];
+            averageHints: number;
+        };
+        Me: {
+            guest: boolean;
+            username?: string;
+            stats: components["schemas"]["Stats"];
+        };
+        Puzzle: {
+            number: number;
+            /** Format: date */
+            day: string;
+            plies: number;
+            /**
+             * @description Target key (FEN placement and side to move).
+             * @example rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w
+             */
+            target: string;
+            difficulty: number;
+            attempt?: components["schemas"]["Attempt"];
+            /** @description UCI moves; only present once the caller's attempt is finished. */
+            solution?: string[];
+        };
+        /** @enum {string} */
+        AttemptStatus: "in_progress" | "solved" | "failed";
+        Attempt: {
+            status: components["schemas"]["AttemptStatus"];
+            /** @description Started after the puzzle's day; doesn't count for streaks or leaderboards. */
+            archive: boolean;
+            guesses: components["schemas"]["Guess"][];
+            hintsUsed: number;
+            hints: components["schemas"]["Hint"][];
+            /** Format: date-time */
+            startedAt: string;
+            /** Format: date-time */
+            finishedAt?: string;
+        };
+        Guess: {
+            moves: string[];
+            /**
+             * @description One letter per ply, G (right move, right ply), Y (right move, another ply of the same colour) or X.
+             * @example YGYGGX
+             */
+            feedback: string;
+        };
+        GuessRequest: {
+            /** @description UCI moves like e2e4 or e7e8q (checked by the server; malformed moves are a 422 with `ply`). */
+            moves: string[];
+        };
+        GuessResult: {
+            feedback: string;
+            status: components["schemas"]["AttemptStatus"];
+            guessesUsed: number;
+            /** @description Present only when this guess finished the attempt. */
+            solution?: string[];
+        };
+        Hint: {
+            /** @enum {string} */
+            kind: "movers" | "captures" | "move";
+            /**
+             * @description The hint in plain English.
+             * @example White moved: knight, pawn. Black moved: knight.
+             */
+            text: string;
+            /** @description (movers) Piece types White moved at least once. */
+            white?: string[];
+            /** @description (movers) Piece types Black moved at least once. */
+            black?: string[];
+            /** @description (captures) 1-based plies where a capture happens. */
+            plies?: number[];
+            /** @description (move) 1-based ply of the revealed solution move. */
+            ply?: number;
+            uci?: string;
+            san?: string;
+        };
+        HintResult: {
+            hintIndex: number;
+            hint: components["schemas"]["Hint"];
+        };
+        DailyEntry: {
+            rank: number;
+            username: string;
+            guesses: number;
+            hints: number;
+            /** @description Solve time, from the start of the attempt to the solving guess. */
+            seconds: number;
+        };
+        DailyLeaderboard: {
+            number: number;
+            entries: components["schemas"]["DailyEntry"][];
+            you?: components["schemas"]["DailyEntry"];
+        };
+        AllTimeEntry: {
+            rank: number;
+            username: string;
+            value: number;
+        };
+        AllTimeLeaderboard: {
+            /** @enum {string} */
+            metric: "current_streak" | "max_streak" | "solved";
+            entries: components["schemas"]["AllTimeEntry"][];
+        };
+        Profile: {
+            username: string;
+            /** Format: date-time */
+            joined: string;
+            stats: components["schemas"]["Stats"];
+        };
+        ArchiveResult: {
+            status: components["schemas"]["AttemptStatus"];
+            guesses: number;
+            hintsUsed: number;
+        };
+        ArchiveItem: {
+            number: number;
+            /** Format: date */
+            day: string;
+            difficulty: number;
+            plies: number;
+            result?: components["schemas"]["ArchiveResult"];
+        };
+        Archive: {
+            page: number;
+            pageSize: number;
+            total: number;
+            puzzles: components["schemas"]["ArchiveItem"][];
         };
     };
     responses: {
-        /** @description Any other error, as RFC 9457 problem details. */
+        /** @description An error, as RFC 9457 problem details. */
         Problem: {
             headers: {
                 [name: string]: unknown;
@@ -52,7 +481,10 @@ export interface components {
             };
         };
     };
-    parameters: never;
+    parameters: {
+        /** @description The daily puzzle's number (#1 is on LAUNCH_DATE). */
+        Number: number;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -96,6 +528,337 @@ export interface operations {
                      *     }
                      */
                     "application/json": components["schemas"]["Health"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    getMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The current player. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    register: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Credentials"];
+            };
+        };
+        responses: {
+            /** @description Registered and signed in. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            409: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Credentials"];
+            };
+        };
+        responses: {
+            /** @description Signed in. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Me"];
+                };
+            };
+            401: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    getToday: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Today's puzzle. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Puzzle"];
+                };
+            };
+            404: components["responses"]["Problem"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    getPuzzle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The daily puzzle's number (#1 is on LAUNCH_DATE). */
+                number: components["parameters"]["Number"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The puzzle. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Puzzle"];
+                };
+            };
+            404: components["responses"]["Problem"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    startPuzzle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The daily puzzle's number (#1 is on LAUNCH_DATE). */
+                number: components["parameters"]["Number"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["Empty"];
+            };
+        };
+        responses: {
+            /** @description The puzzle with the caller's attempt. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Puzzle"];
+                };
+            };
+            404: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    submitGuess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The daily puzzle's number (#1 is on LAUNCH_DATE). */
+                number: components["parameters"]["Number"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GuessRequest"];
+            };
+        };
+        responses: {
+            /** @description The guess was recorded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuessResult"];
+                };
+            };
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            422: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    takeHint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The daily puzzle's number (#1 is on LAUNCH_DATE). */
+                number: components["parameters"]["Number"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["Empty"];
+            };
+        };
+        responses: {
+            /** @description The hint. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HintResult"];
+                };
+            };
+            404: components["responses"]["Problem"];
+            409: components["responses"]["Problem"];
+            429: components["responses"]["Problem"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    getDailyLeaderboard: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description The daily puzzle's number (#1 is on LAUNCH_DATE). */
+                number: components["parameters"]["Number"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The leaderboard. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DailyLeaderboard"];
+                };
+            };
+            404: components["responses"]["Problem"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    getAllTimeLeaderboard: {
+        parameters: {
+            query: {
+                metric: "current_streak" | "max_streak" | "solved";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The leaderboard. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllTimeLeaderboard"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    getUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                username: components["schemas"]["Username"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The profile. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Profile"];
+                };
+            };
+            404: components["responses"]["Problem"];
+            default: components["responses"]["Problem"];
+        };
+    };
+    getArchive: {
+        parameters: {
+            query?: {
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of the archive. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Archive"];
                 };
             };
             default: components["responses"]["Problem"];

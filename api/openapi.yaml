@@ -1,16 +1,29 @@
 openapi: 3.0.3
 info:
   title: Retrograde API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     API for Retrograde, chess detective puzzles built on retrograde analysis.
     This file is the contract: `pnpm gen` generates the Go server interface and the
     TypeScript client types from it. Change it first, then implement.
+
+    Every request is validated against this file (unknown JSON fields, lengths, enums).
+    State-changing requests must send `Content-Type: application/json` and an `Origin`
+    header equal to the site's BASE_URL. Errors are RFC 9457 problem details.
+
+    Sessions: the `rg_session` cookie. `GET` requests never create one;
+    `POST /daily/{number}/start` creates a guest session when there is none.
   license:
     name: GPL-3.0-or-later
     url: https://www.gnu.org/licenses/gpl-3.0.html
 servers:
   - url: /api
+tags:
+  - name: system
+  - name: auth
+  - name: daily
+  - name: leaderboards
+  - name: users
 paths:
   /health:
     get:
@@ -35,14 +48,354 @@ paths:
               example: { status: unavailable, db: error }
         default:
           $ref: '#/components/responses/Problem'
+
+  /auth/me:
+    get:
+      operationId: getMe
+      summary: The current player
+      description: A caller without a session is reported as a guest with empty stats.
+      tags: [auth]
+      responses:
+        '200':
+          description: The current player.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        default:
+          $ref: '#/components/responses/Problem'
+
+  /auth/register:
+    post:
+      operationId: register
+      summary: Create an account
+      description: |
+        Creates the user, moves the caller's guest attempts to it (for puzzles the new account
+        hasn't played, which is all of them), and rotates the session.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Credentials'
+      responses:
+        '201':
+          description: Registered and signed in.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/Problem'
+        default:
+          $ref: '#/components/responses/Problem'
+
+  /auth/login:
+    post:
+      operationId: login
+      summary: Sign in
+      description: |
+        Signs in, moves the caller's guest attempts to the account for any puzzle the account
+        hasn't played (the rest are deleted), and rotates the session.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Credentials'
+      responses:
+        '200':
+          description: Signed in.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/Problem'
+        default:
+          $ref: '#/components/responses/Problem'
+
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Sign out
+      description: Deletes the session and clears the cookie. Safe to call without a session.
+      tags: [auth]
+      responses:
+        '204':
+          description: Signed out.
+        default:
+          $ref: '#/components/responses/Problem'
+
+  /daily:
+    get:
+      operationId: getToday
+      summary: Today's puzzle
+      description: |
+        Creates nothing. `attempt` is present only if the caller has started this puzzle,
+        and `solution` only once that attempt is finished.
+      tags: [daily]
+      responses:
+        '200':
+          description: Today's puzzle.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Puzzle'
+        '404':
+          $ref: '#/components/responses/Problem'
+        default:
+          $ref: '#/components/responses/Problem'
+
+  /daily/{number}:
+    parameters:
+      - $ref: '#/components/parameters/Number'
+    get:
+      operationId: getPuzzle
+      summary: A puzzle by number (today's or an archive puzzle)
+      description: Same as `GET /daily` for puzzle `number`, which must not be in the future.
+      tags: [daily]
+      responses:
+        '200':
+          description: The puzzle.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Puzzle'
+        '404':
+          $ref: '#/components/responses/Problem'
+        default:
+          $ref: '#/components/responses/Problem'
+
+  /daily/{number}/start:
+    parameters:
+      - $ref: '#/components/parameters/Number'
+    post:
+      operationId: startPuzzle
+      summary: Start (or resume) the caller's attempt
+      description: |
+        The web app calls this when it shows the puzzle. Creates a guest player and session if
+        the caller has none, and the attempt with its start time (the leaderboard's clock).
+        Idempotent: calling it again returns the same attempt. Puzzles before today's are
+        archive attempts (no streaks or leaderboards); that is fixed here, at the start.
+      tags: [daily]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Empty'
+      responses:
+        '200':
+          description: The puzzle with the caller's attempt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Puzzle'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/Problem'
+        default:
+          $ref: '#/components/responses/Problem'
+
+  /daily/{number}/guesses:
+    parameters:
+      - $ref: '#/components/parameters/Number'
+    post:
+      operationId: submitGuess
+      summary: Submit a guess
+      description: |
+        A guess is a complete game from the initial position of exactly the puzzle's number of
+        plies, in UCI. More than 40 moves is a 400; a wrong length, a malformed move or an
+        illegal move is a 422 (with `ply` for the move). A guess on a puzzle that wasn't
+        started, or on a finished attempt, or a seventh guess, is a 409. `solution` is present
+        only when this guess finishes the attempt.
+      tags: [daily]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GuessRequest'
+      responses:
+        '200':
+          description: The guess was recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GuessResult'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '422':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/Problem'
+        default:
+          $ref: '#/components/responses/Problem'
+
+  /daily/{number}/hints:
+    parameters:
+      - $ref: '#/components/parameters/Number'
+    post:
+      operationId: takeHint
+      summary: Take the next hint
+      description: |
+        Hints come in order (movers, captures, one move) and each one counts against the
+        player's ranking. 409 if the attempt is finished, wasn't started, or all three hints
+        are used.
+      tags: [daily]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Empty'
+      responses:
+        '200':
+          description: The hint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HintResult'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/Problem'
+        default:
+          $ref: '#/components/responses/Problem'
+
+  /leaderboards/daily/{number}:
+    parameters:
+      - $ref: '#/components/parameters/Number'
+    get:
+      operationId: getDailyLeaderboard
+      summary: A daily puzzle's leaderboard
+      description: |
+        Solved, non-archive attempts of registered players: fewer guesses, then fewer hints,
+        then a shorter time. `you` is the caller's own entry, if they are signed in and solved it.
+      tags: [leaderboards]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 100
+      responses:
+        '200':
+          description: The leaderboard.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DailyLeaderboard'
+        '404':
+          $ref: '#/components/responses/Problem'
+        default:
+          $ref: '#/components/responses/Problem'
+
+  /leaderboards/all-time:
+    get:
+      operationId: getAllTimeLeaderboard
+      summary: The all-time leaderboard (top 100)
+      tags: [leaderboards]
+      parameters:
+        - name: metric
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [current_streak, max_streak, solved]
+      responses:
+        '200':
+          description: The leaderboard.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AllTimeLeaderboard'
+        default:
+          $ref: '#/components/responses/Problem'
+
+  /users/{username}:
+    parameters:
+      - name: username
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/Username'
+    get:
+      operationId: getUser
+      summary: A public profile
+      tags: [users]
+      responses:
+        '200':
+          description: The profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Profile'
+        '404':
+          $ref: '#/components/responses/Problem'
+        default:
+          $ref: '#/components/responses/Problem'
+
+  /archive:
+    get:
+      operationId: getArchive
+      summary: Past daily puzzles, newest first
+      description: 30 per page. `result` is the caller's own result, if they have one.
+      tags: [daily]
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+            default: 1
+      responses:
+        '200':
+          description: One page of the archive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Archive'
+        default:
+          $ref: '#/components/responses/Problem'
+
 components:
+  parameters:
+    Number:
+      name: number
+      in: path
+      required: true
+      description: The daily puzzle's number (#1 is on LAUNCH_DATE).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100000
+
   responses:
     Problem:
-      description: Any other error, as RFC 9457 problem details.
+      description: An error, as RFC 9457 problem details.
       content:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
+
   schemas:
     Health:
       type: object
@@ -55,6 +408,7 @@ components:
         db:
           type: string
           enum: [ok, error]
+
     Problem:
       description: RFC 9457 problem details, sent as application/problem+json.
       type: object
@@ -71,3 +425,334 @@ components:
           type: string
         instance:
           type: string
+        ply:
+          type: integer
+          description: For an invalid guess, the 1-based ply of the offending move (like hint plies).
+
+    Empty:
+      description: An empty JSON object (state-changing requests always send a JSON body).
+      type: object
+      additionalProperties: false
+
+    Username:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{3,20}$'
+      example: holmes_221b
+
+    Credentials:
+      type: object
+      additionalProperties: false
+      required: [username, password]
+      properties:
+        username:
+          $ref: '#/components/schemas/Username'
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+
+    Stats:
+      type: object
+      additionalProperties: false
+      required: [played, solved, winRate, currentStreak, maxStreak, guessDistribution, averageHints]
+      properties:
+        played:
+          type: integer
+        solved:
+          type: integer
+        winRate:
+          type: number
+          description: solved / played, 0 when nothing was played.
+        currentStreak:
+          type: integer
+        maxStreak:
+          type: integer
+        guessDistribution:
+          type: array
+          description: Solves in 1, 2, …, 6 guesses, then failed attempts (7 entries).
+          minItems: 7
+          maxItems: 7
+          items:
+            type: integer
+        averageHints:
+          type: number
+
+    Me:
+      type: object
+      additionalProperties: false
+      required: [guest, stats]
+      properties:
+        guest:
+          type: boolean
+        username:
+          type: string
+        stats:
+          $ref: '#/components/schemas/Stats'
+
+    Puzzle:
+      type: object
+      additionalProperties: false
+      required: [number, day, plies, target, difficulty]
+      properties:
+        number:
+          type: integer
+        day:
+          type: string
+          format: date
+        plies:
+          type: integer
+        target:
+          type: string
+          description: Target key (FEN placement and side to move).
+          example: rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w
+        difficulty:
+          type: integer
+          minimum: 1
+          maximum: 5
+        attempt:
+          $ref: '#/components/schemas/Attempt'
+        solution:
+          type: array
+          description: UCI moves; only present once the caller's attempt is finished.
+          items:
+            type: string
+
+    AttemptStatus:
+      type: string
+      enum: [in_progress, solved, failed]
+
+    Attempt:
+      type: object
+      additionalProperties: false
+      required: [status, archive, guesses, hintsUsed, hints, startedAt]
+      properties:
+        status:
+          $ref: '#/components/schemas/AttemptStatus'
+        archive:
+          type: boolean
+          description: Started after the puzzle's day; doesn't count for streaks or leaderboards.
+        guesses:
+          type: array
+          maxItems: 6
+          items:
+            $ref: '#/components/schemas/Guess'
+        hintsUsed:
+          type: integer
+          minimum: 0
+          maximum: 3
+        hints:
+          type: array
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/Hint'
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+
+    Guess:
+      type: object
+      additionalProperties: false
+      required: [moves, feedback]
+      properties:
+        moves:
+          type: array
+          items:
+            type: string
+        feedback:
+          type: string
+          description: One letter per ply, G (right move, right ply), Y (right move, another ply of the same colour) or X.
+          example: YGYGGX
+
+    GuessRequest:
+      type: object
+      additionalProperties: false
+      required: [moves]
+      properties:
+        moves:
+          type: array
+          description: UCI moves like e2e4 or e7e8q (checked by the server; malformed moves are a 422 with `ply`).
+          maxItems: 40
+          items:
+            type: string
+            maxLength: 5
+
+    GuessResult:
+      type: object
+      additionalProperties: false
+      required: [feedback, status, guessesUsed]
+      properties:
+        feedback:
+          type: string
+        status:
+          $ref: '#/components/schemas/AttemptStatus'
+        guessesUsed:
+          type: integer
+        solution:
+          type: array
+          description: Present only when this guess finished the attempt.
+          items:
+            type: string
+
+    Hint:
+      type: object
+      additionalProperties: false
+      required: [kind, text]
+      properties:
+        kind:
+          type: string
+          enum: [movers, captures, move]
+        text:
+          type: string
+          description: The hint in plain English.
+          example: 'White moved: knight, pawn. Black moved: knight.'
+        white:
+          type: array
+          description: (movers) Piece types White moved at least once.
+          items:
+            type: string
+        black:
+          type: array
+          description: (movers) Piece types Black moved at least once.
+          items:
+            type: string
+        plies:
+          type: array
+          description: (captures) 1-based plies where a capture happens.
+          items:
+            type: integer
+        ply:
+          type: integer
+          description: (move) 1-based ply of the revealed solution move.
+        uci:
+          type: string
+        san:
+          type: string
+
+    HintResult:
+      type: object
+      additionalProperties: false
+      required: [hintIndex, hint]
+      properties:
+        hintIndex:
+          type: integer
+          minimum: 1
+          maximum: 3
+        hint:
+          $ref: '#/components/schemas/Hint'
+
+    DailyEntry:
+      type: object
+      additionalProperties: false
+      required: [rank, username, guesses, hints, seconds]
+      properties:
+        rank:
+          type: integer
+        username:
+          type: string
+        guesses:
+          type: integer
+        hints:
+          type: integer
+        seconds:
+          type: integer
+          description: Solve time, from the start of the attempt to the solving guess.
+
+    DailyLeaderboard:
+      type: object
+      additionalProperties: false
+      required: [number, entries]
+      properties:
+        number:
+          type: integer
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/DailyEntry'
+        you:
+          $ref: '#/components/schemas/DailyEntry'
+
+    AllTimeEntry:
+      type: object
+      additionalProperties: false
+      required: [rank, username, value]
+      properties:
+        rank:
+          type: integer
+        username:
+          type: string
+        value:
+          type: integer
+
+    AllTimeLeaderboard:
+      type: object
+      additionalProperties: false
+      required: [metric, entries]
+      properties:
+        metric:
+          type: string
+          enum: [current_streak, max_streak, solved]
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllTimeEntry'
+
+    Profile:
+      type: object
+      additionalProperties: false
+      required: [username, joined, stats]
+      properties:
+        username:
+          type: string
+        joined:
+          type: string
+          format: date-time
+        stats:
+          $ref: '#/components/schemas/Stats'
+
+    ArchiveResult:
+      type: object
+      additionalProperties: false
+      required: [status, guesses, hintsUsed]
+      properties:
+        status:
+          $ref: '#/components/schemas/AttemptStatus'
+        guesses:
+          type: integer
+        hintsUsed:
+          type: integer
+
+    ArchiveItem:
+      type: object
+      additionalProperties: false
+      required: [number, day, difficulty, plies]
+      properties:
+        number:
+          type: integer
+        day:
+          type: string
+          format: date
+        difficulty:
+          type: integer
+        plies:
+          type: integer
+        result:
+          $ref: '#/components/schemas/ArchiveResult'
+
+    Archive:
+      type: object
+      additionalProperties: false
+      required: [page, pageSize, total, puzzles]
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+        puzzles:
+          type: array
+          items:
+            $ref: '#/components/schemas/ArchiveItem'
