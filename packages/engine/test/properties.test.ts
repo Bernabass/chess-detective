@@ -17,10 +17,10 @@ describe('engine properties over seeded random games', () => {
         total.promotions += s.promotions;
       }),
       // endOnFailure: report the failing seed at once instead of shrinking (each run is a game).
-      { seed: FC_SEED, numRuns: 20, endOnFailure: true },
+      { seed: FC_SEED, numRuns: 8, endOnFailure: true },
     );
     // The random games must actually exercise the special moves.
-    expect(total.positions).toBeGreaterThan(1500);
+    expect(total.positions).toBeGreaterThan(600);
     expect(total.castles).toBeGreaterThan(0);
     expect(total.enPassants).toBeGreaterThan(0);
     expect(total.promotions).toBeGreaterThan(0);

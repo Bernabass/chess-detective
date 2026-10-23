@@ -198,3 +198,20 @@ Append-only. Each entry: date, context, decision, consequences. Newest at the bo
 - **Random-source weights** stay at §7.2's starting values. Random games contribute very little (0.15% acceptance in the first run); they remain as the source for puzzles that end in castling or en passant.
 - **Output.** The JSONL holds only deterministic fields; timings go to a separate `<out>.stats.json`. Ids are `g{seed}-{index:06}`, random candidates are indexed from 1,000,000, and lines are sorted by index. CLI paths resolve against the directory the command was run from (`INIT_CWD`), since `pnpm --filter` runs scripts inside `apps/generator`.
 - Consequences: The pool reaches 12 plies in about 72 minutes on the owner's 2-core laptop. Generator output depends on the engine version, so `verify` compares `solverNodes` only for puzzles made by the same engine version (for older ones it recomputes the score from the stored `solverNodes`).
+
+## 2026-10-23: Fast suite trimmed so `pnpm check` stays under about 90 s
+- Context: After Phase 4, `pnpm check` took 110–150 s on the owner's laptop. The owner asked for about 90 s, leaving room for the Phase 5 web tests.
+- Decision: The fast suite keeps smaller versions of the heavy property runs. The full sizes are in the nightly slow suites, which already held larger versions of each.
+
+  | Test | Fast before | Fast now | Slow suite |
+  |---|---|---|---|
+  | Retraction completeness | 4 × 500 positions | 2 × 150 | 4 × 12,500 |
+  | Bound admissibility | 5,000 games, 1,500 with the incremental-bound check | 1,500 games, 500 with the check | 100,000, all with the check |
+  | Analyzer claims | 6 runs | 2 runs | larger run |
+  | Engine round-trips | 20 games | 8 games | 400 games |
+  | Solver vs. brute force | every 3-ply target; 500 sampled at 4 plies | 1,000 sampled at 3 plies; 150 at 4 | every 3-ply target; 500 at 4 and at 5 plies |
+  | Wismuth diagram statistics | N ≤ 4 | N ≤ 3 | N ≤ 5 |
+  | Generator: `verifyCandidate` vs. brute force | every 150th 4-ply target | every 600th | every 30th, plus `verify` of the whole committed pool (new generator slow suite) |
+
+  The 20-puzzle fixture is now cut from puzzles cheap to solve.
+- Consequences: `pnpm check` measured 72 s warm (lint 17 s, typecheck 9 s, tests 38 s, Go 6 s, hooks 1 s). Nightly CI also runs `pnpm --filter @retrograde/generator test:slow` (about 4 minutes).

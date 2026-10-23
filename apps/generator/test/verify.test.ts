@@ -1,15 +1,8 @@
-import {
-  initialPosition,
-  legalMoves,
-  makeMove,
-  moveToUci,
-  targetKey,
-  unmakeMove,
-  type Position,
-} from '@retrograde/engine';
+import { targetKey } from '@retrograde/engine';
 import { describe, expect, it } from 'vitest';
 import { replayMoves } from '../src/beam';
 import { hasTransposedLastMove, verifyCandidate } from '../src/verify';
+import { checkFourPlyTargets } from './brute-force';
 
 const target = (moves: string): string => targetKey(replayMoves(moves.split(' ')));
 const LIMIT = 1_000_000;
@@ -74,49 +67,11 @@ describe('hasTransposedLastMove', () => {
   });
 });
 
-/** Every target reachable in exactly `plies` plies, with how many games reach it and one of them. */
-function bruteForce(plies: number): Map<string, { games: number; moves: string[] }> {
-  const out = new Map<string, { games: number; moves: string[] }>();
-  const p: Position = initialPosition();
-  const path: string[] = [];
-  const walk = (left: number): void => {
-    if (left === 0) {
-      const key = targetKey(p);
-      const seen = out.get(key);
-      if (seen) seen.games++;
-      else out.set(key, { games: 1, moves: [...path] });
-      return;
-    }
-    for (const m of legalMoves(p)) {
-      makeMove(p, m);
-      path.push(moveToUci(m));
-      walk(left - 1);
-      path.pop();
-      unmakeMove(p);
-    }
-  };
-  walk(plies);
-  return out;
-}
-
 describe('verifyCandidate against brute force', () => {
-  it('accepts exactly the 4-ply targets with one 4-ply game and none in 2 plies', () => {
-    const four = bruteForce(4);
-    const two = bruteForce(2);
-    let checked = 0;
-    let accepted = 0;
-    let i = 0;
-    for (const [key, { games, moves }] of four) {
-      if (i++ % 150 !== 0) continue; // every 150th of the 71,852 targets
-      const expected =
-        games === 1 && !two.has(key) ? 'accepted' : games > 1 ? 'not-unique' : 'not-shortest';
-      expect(verifyCandidate(key, 4, LIMIT, moves).status, `${key} (${moves.join(' ')})`).toBe(
-        expected,
-      );
-      checked++;
-      if (expected === 'accepted') accepted++;
-    }
-    expect(checked).toBeGreaterThan(450);
-    expect(accepted).toBeGreaterThan(20);
+  it('accepts exactly the 4-ply targets with one 4-ply game and none in 2 plies (every 600th)', () => {
+    // Every 30th target in the slow suite.
+    const { checked, accepted } = checkFourPlyTargets(600);
+    expect(checked).toBeGreaterThan(110);
+    expect(accepted).toBeGreaterThan(5);
   }, 60_000);
 });

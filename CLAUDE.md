@@ -26,7 +26,7 @@ Chess detective puzzles built on **retrograde analysis**: players reason *backwa
 - Database: the owner's **local PostgreSQL**, configured by `DATABASE_URL` in `.env`. `pnpm db:up` / `pnpm db:down` (Docker) exist only as an optional alternative.
 - `pnpm dev`: run the Go API and the Vite dev server together (Vite proxies `/api` to Go)
 - `pnpm check`: lint + typecheck + fast tests for every TS package, plus `go vet`, golangci-lint and Go unit tests. Must pass before every commit.
-- `pnpm --filter @retrograde/engine test` / `test:slow`: engine fast / slow suites
+- `pnpm --filter @retrograde/engine test` / `test:slow`: engine fast / slow suites (same for `@retrograde/generator`; both slow suites run nightly in CI)
 - `pnpm test:api`: Go unit + integration tests (needs Postgres running)
 - `pnpm test:e2e`: Playwright end-to-end tests (from Phase 5)
 - `pnpm gen`: regenerate sqlc code, Go server stubs and TS API types from `api/openapi.yaml`

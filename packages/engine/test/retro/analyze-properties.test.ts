@@ -12,8 +12,8 @@ describe('analyzePosition claims on positions from real games', () => {
       fc.property(fc.integer({ min: 1, max: 0x7fffffff }), (seed) => {
         positions += checkAnalyzerClaims(seed, 40, 2);
       }),
-      { seed: 20261023, numRuns: 6, endOnFailure: true },
+      { seed: 20261023, numRuns: 2, endOnFailure: true },
     );
-    expect(positions).toBeGreaterThanOrEqual(200);
+    expect(positions).toBeGreaterThanOrEqual(60);
   }, 300_000);
 });

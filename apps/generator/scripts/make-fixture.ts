@@ -1,7 +1,7 @@
 // Cuts the committed verify fixture (test/fixtures/puzzles-20.jsonl) from a generated pool:
-// 18 puzzles of at most 8 plies spread over the pool's scores, plus the cheapest-to-solve
-// 11- and 12-ply puzzles (so the long end is covered and verifying stays fast), with stars
-// re-ranked within the fixture itself (stars are always relative to the file).
+// 18 puzzles of at most 8 plies and 3,000 solver nodes spread over the pool's scores, plus the
+// cheapest-to-solve 11- and 12-ply puzzles (so the long end is covered and verifying stays
+// fast), with stars re-ranked within the fixture itself (stars are always relative to the file).
 //   npx tsx scripts/make-fixture.ts ../../data/puzzles-v1.jsonl
 import { readFileSync, writeFileSync } from 'node:fs';
 import { assignStars } from '../src/difficulty';
@@ -16,7 +16,7 @@ const cheapest = (plies: number) =>
     .sort((a, b) => a.solverNodes - b.solverNodes || (a.id < b.id ? -1 : 1))[0];
 const long = [cheapest(11), cheapest(12)].filter((r) => r !== undefined);
 const short = all
-  .filter((r) => r.plies <= 8)
+  .filter((r) => r.plies <= 8 && r.solverNodes <= 3000)
   .sort((a, b) => a.score - b.score || (a.id < b.id ? -1 : 1));
 const picked = Array.from(
   { length: 18 },
