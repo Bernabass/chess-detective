@@ -26,7 +26,8 @@ export interface SolveOptions {
   timeLimitMs?: number;
   nodeLimit?: number;
   shouldStop?: () => boolean;
-  onProgress?: (p: { nodes: number; elapsedMs: number }) => void;
+  /** About every 50,000 nodes; `plies` is the length being searched. */
+  onProgress?: (p: { nodes: number; elapsedMs: number; plies: number }) => void;
   /** Castling rights (subset of "KQkq") that must still hold at the end. */
   castling?: string;
   /** En passant square the final position must have (as written in FEN). */
@@ -164,7 +165,7 @@ export function solveFrom(
       const elapsed = Date.now() - startTime;
       if (nodes >= nextProgress) {
         nextProgress = nodes + PROGRESS_INTERVAL;
-        opts.onProgress?.({ nodes, elapsedMs: elapsed });
+        opts.onProgress?.({ nodes, elapsedMs: elapsed, plies });
       }
       if (nodes >= nodeLimit || elapsed > timeLimit) status = 'limit';
       else if (opts.shouldStop?.() === true) status = 'aborted';
