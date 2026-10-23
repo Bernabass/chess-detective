@@ -1,0 +1,192 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/fraunces/index.css';
+@import '@fontsource-variable/inter/index.css';
+@import '@fontsource/ibm-plex-mono/latin-400.css';
+@import '@fontsource/ibm-plex-mono/latin-500.css';
+@import 'chessground/assets/chessground.base.css';
+@import 'chessground/assets/chessground.cburnett.css';
+
+/* Dark mode follows data-theme on <html> (set by public/theme-init.js and src/lib/theme.ts). */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/*
+ * The "detective's casebook" palette (SPEC §11.4): warm paper in light mode, deep ink in dark
+ * mode. Components use the semantic tokens below, never raw colours.
+ */
+:root {
+  --paper: #f4ede0;
+  --card: #fbf7ef;
+  --card-edge: #e2d6c1;
+  --ink: #2a241d;
+  --ink-soft: #5b5046;
+  --rule: #e2d6c1;
+  --accent: #8c2f2b;
+  --accent-ink: #fbf7ef;
+  --brass: #7a5f28;
+  --ok: #2f6b3a;
+  --warn: #8a5a00;
+  --bad: #8c2f2b;
+  --focus: #1f5fa8;
+  --sq-light: #eadbc0;
+  --sq-dark: #b08a64;
+  --shadow: 0 1px 0 rgb(42 36 29 / 0.06), 0 6px 18px -10px rgb(42 36 29 / 0.25);
+  color-scheme: light;
+}
+
+[data-theme='dark'] {
+  --paper: #15181d;
+  --card: #1e232a;
+  --card-edge: #2d343d;
+  --ink: #e9e1d2;
+  --ink-soft: #b3aa9a;
+  --rule: #2d343d;
+  --accent: #d0695f;
+  --accent-ink: #15181d;
+  --brass: #c9a55c;
+  --ok: #7cc48a;
+  --warn: #e0b25a;
+  --bad: #e5857b;
+  --focus: #8ab4f8;
+  --sq-light: #c9b99c;
+  --sq-dark: #8a6a4c;
+  --shadow: 0 1px 0 rgb(0 0 0 / 0.3), 0 8px 20px -12px rgb(0 0 0 / 0.6);
+  color-scheme: dark;
+}
+
+@theme {
+  --font-display: 'Fraunces Variable', Georgia, 'Times New Roman', serif;
+  --font-sans: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+
+  --color-paper: var(--paper);
+  --color-card: var(--card);
+  --color-card-edge: var(--card-edge);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-rule: var(--rule);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-brass: var(--brass);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-focus: var(--focus);
+  --shadow-card: var(--shadow);
+}
+
+@layer base {
+  html {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    min-height: 100dvh;
+    overflow-x: hidden;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-optical-sizing: auto;
+    letter-spacing: -0.01em;
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 25%, transparent);
+  }
+}
+
+/* --- Board (chessground) --------------------------------------------------------------- */
+
+/* Checkerboard drawn with CSS so it follows the theme: a8 (top-left) is a light square. */
+cg-board {
+  background-color: var(--sq-light);
+  background-image: repeating-conic-gradient(var(--sq-dark) 0% 25%, var(--sq-light) 0% 50%);
+  background-size: 25% 25%;
+  border-radius: 3px;
+}
+
+cg-board square.last-move {
+  background-color: rgb(205 165 40 / 0.55);
+}
+
+cg-board square.selected {
+  background-color: rgb(31 95 168 / 0.35);
+}
+
+cg-board square.note-highlight {
+  box-shadow: inset 0 0 0 4px var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* Coordinates inside the board (chessground's defaults sit partly outside it). One dark colour
+   reads on both square colours. */
+.cg-wrap coords {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  font-size: 10px;
+  color: #3d2e1f;
+  opacity: 0.85;
+}
+
+.cg-wrap coords.ranks {
+  left: 2px;
+  top: 0;
+  width: 10px;
+  height: 100%;
+}
+
+.cg-wrap coords.ranks coord {
+  transform: none;
+  padding-top: 1px;
+}
+
+.cg-wrap coords.files {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 14px;
+}
+
+.cg-wrap coords.files coord {
+  text-align: right;
+  padding-right: 3px;
+}
+
+/* Keep the board square at any width. */
+.board-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+}
+
+.board-frame > .cg-wrap {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Palette pieces reuse chessground's piece images (its CSS sizes pieces for the board). */
+.cg-wrap.piece-icon {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.cg-wrap.piece-icon piece {
+  position: static;
+  display: block;
+  width: 100%;
+  height: 100%;
+}

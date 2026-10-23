@@ -29,3 +29,8 @@ Thumbs.db
 # Personal editor settings (only the shared extension recommendations are tracked)
 .vscode/*
 !.vscode/extensions.json
+
+# Playwright output and the local screenshot review (apps/web/screenshots/)
+apps/web/screenshots/
+apps/web/test-results/
+apps/web/playwright-report/

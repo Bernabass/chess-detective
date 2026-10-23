@@ -4,7 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Chess detective puzzles built on retrograde analysis." />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>Retrograde</title>
+    <!-- Blocking on purpose: sets data-theme before first paint (external, so the CSP stays strict). -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>
