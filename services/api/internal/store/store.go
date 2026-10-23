@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -30,11 +31,35 @@ func Open(ctx context.Context, databaseURL string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing DATABASE_URL: %w", err)
 	}
+	// Timestamps come back in UTC, like the rest of the API, not in the server's local zone.
+	cfg.AfterConnect = func(_ context.Context, conn *pgx.Conn) error {
+		conn.TypeMap().RegisterType(&pgtype.Type{
+			Name: "timestamptz", OID: pgtype.TimestamptzOID,
+			Codec: &pgtype.TimestamptzCodec{ScanLocation: time.UTC},
+		})
+		return nil
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("creating connection pool: %w", err)
 	}
 	return &Store{pool: pool, q: sqlcdb.New(pool)}, nil
+}
+
+// Queries runs queries outside a transaction.
+func (s *Store) Queries() *sqlcdb.Queries {
+	return s.q
+}
+
+// InTx runs fn in one transaction, committed if fn returns nil and rolled back otherwise.
+func (s *Store) InTx(ctx context.Context, fn func(q *sqlcdb.Queries) error) error {
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		return fn(s.q.WithTx(tx))
+	})
+	if err != nil {
+		return fmt.Errorf("transaction: %w", err)
+	}
+	return nil
 }
 
 // Close releases every connection.
