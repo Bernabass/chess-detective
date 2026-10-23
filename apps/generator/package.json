@@ -9,7 +9,8 @@
     "start": "tsx src/main.ts",
     "measure": "tsx scripts/measure.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:slow": "vitest run --config vitest.slow.config.ts"
   },
   "dependencies": {
     "@retrograde/engine": "workspace:*"
