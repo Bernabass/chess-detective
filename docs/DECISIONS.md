@@ -215,3 +215,51 @@ Append-only. Each entry: date, context, decision, consequences. Newest at the bo
 
   The 20-puzzle fixture is now cut from puzzles cheap to solve.
 - Consequences: `pnpm check` measured 72 s warm (lint 17 s, typecheck 9 s, tests 38 s, Go 6 s, hooks 1 s). Nightly CI also runs `pnpm --filter @retrograde/generator test:slow` (about 4 minutes).
+
+## 2026-10-23: Phase 5 web shell and Lab decisions
+- Context: Phase 5 plan, approved by the owner with all five proposals and three additions (rename the "two moves back" example; a CSP-friendly theme bootstrap; Copy link and Open in Lichess buttons).
+- **New dependencies** (exact versions; all GPL-compatible):
+
+  | Package | Version | License | Kind |
+  |---|---|---|---|
+  | react-router | 8.5.0 | MIT | runtime |
+  | chessground | 9.2.1 | GPL-3.0-or-later | runtime |
+  | comlink | 4.4.2 | Apache-2.0 | runtime |
+  | @fontsource-variable/fraunces, @fontsource-variable/inter | 5.3.0 | OFL-1.1 | runtime (fonts) |
+  | @fontsource/ibm-plex-mono | 5.3.0 | OFL-1.1 | runtime (fonts) |
+  | tailwindcss, @tailwindcss/vite | 4.3.3 | MIT | dev |
+  | @playwright/test | 1.64.1 | Apache-2.0 | dev |
+  | @axe-core/playwright | 4.14.0 | MPL-2.0 | dev |
+
+  `@retrograde/engine` is now a dependency of the web app. Playwright's Chromium is a one-time download (`pnpm --filter @retrograde/web exec playwright install chromium`).
+- **Piece set: cburnett**, as shipped inside chessground 9.2.1 (`assets/chessground.cburnett.css`, inline SVG). The pieces are by Colin M.L. Burnett. Lichess's `COPYING.md` (checked 2026-10-23) lists them as **GPLv2+**, which is compatible with this repository's GPL-3.0-or-later. No extra download.
+- **Visual design (SPEC §11.4).**
+  - Colours are CSS variables, switched by `data-theme` on `<html>` and mapped into Tailwind:
+    - light "paper": #F4EDE0, cards #FBF7EF, ink #2A241D, accent oxblood #8C2F2B;
+    - dark "ink": #15181D, cards #1E232A, parchment text #E9E1D2, accent #D0695F.
+  - Type: Fraunces (headings), Inter (interface), IBM Plex Mono (FEN, moves).
+  - The board's checkerboard is drawn in CSS from the same tokens (light #EADBC0, dark #B08A64; a little darker in dark mode). Coordinates sit inside the board in one dark colour that reads on both square colours.
+  - axe finds no serious or critical issues in either theme (e2e).
+- **Theme bootstrap without inline script** (owner's addition): `public/theme-init.js`, loaded with a plain `<script src>` in `<head>` (not `async` or `defer`), sets `data-theme` before first paint from `localStorage` or `prefers-color-scheme`. A strict CSP (`script-src 'self'`) needs no `'unsafe-inline'` or hashes. `src/lib/theme.ts` mirrors it, and the header's toggle offers light, system and dark.
+- **Lab behaviour.**
+  - **Workers:** analysis runs 300 ms after the last edit in an analysis worker, and a newer request terminates and restarts it. Prove runs in a separate prover worker, so analysis keeps working.
+  - **Prove:** up to 16 plies with no time limit; Cancel terminates the worker and shows "Cancelled". Progress messages still queued after a cancel are ignored, and leaving the position stops its search.
+  - **Notes:** findings with the same rule are grouped into one note (four "can no longer castle" lines become one note).
+  - **Keyboard editing:** the FEN field (missing trailing fields default to `w - -`), plus click-to-place. A palette piece arms 64 square buttons over the board, which a click, a tap or Tab + Enter place on; Escape disarms.
+  - **Links:** edits replace the history entry; take-backs and examples push one, so Back undoes them.
+  - **Copy link and Open in Lichess** (owner's addition). Lichess's board editor URL is `https://lichess.org/editor/<FEN with spaces as underscores>`.
+  - **Stale report:** while a new analysis runs, the previous report stays visible but dimmed and `inert`, so nothing in it can act on the wrong position.
+  - **No auto-castle:** chessground's `autoCastle` is off; a king dragged two squares moves alone.
+  - **Broken worker:** a worker that fails to load or crashes rejects its pending calls instead of hanging.
+  - **Prove announcements:** screen readers hear only the length being searched and the outcome, not every node-count update.
+  - The pages that need the API are explanatory placeholders. Login and register show the disabled form layout.
+- **Engine: `onProgress` reports the ply count being searched** (`plies`), including when each length starts. It's additive and changes no output, so the engine stays at 0.4.0.
+- **Testing.**
+  - Component tests mock `Board`, because chessground needs layout jsdom lacks. They render real engine reports.
+  - Worker-protocol and Lab-state tests run in Node instead of jsdom, which halved the web suite's time.
+  - The client's cancel-by-terminate is tested with a `MessageChannel` standing in for the worker.
+  - Playwright runs against the production build (`vite build` + `vite preview`, with no API proxy when `E2E=1`). `pnpm --filter @retrograde/web shots` writes 44 screenshots (11 states × 360/1280 px × light/dark) for visual review; they're gitignored. 4 final ones are committed in `docs/screenshots/`.
+  - CI's Ubuntu job installs Chromium and runs `pnpm test:e2e`.
+- **Lint caches.** `pnpm lint` uses ESLint's and Prettier's caches (in `node_modules/.cache/`), so a warm run takes 5 s instead of 25 s, and `pnpm check` 71 s. Caveat: ESLint's cache doesn't re-check an unchanged file when a type it imports changes. CI lints from scratch, so it still catches those.
+- **CSP note for Phase 9:** the piece images are `data:` SVG URIs (in chessground's CSS), so the policy needs `img-src 'self' data:` (SPEC §11.1 updated). Same-origin module workers and CSSOM style changes are allowed under `'self'`.
+- Consequences: the Lab works offline in the browser, with no server. Main bundle 116.65 KB gzip (`/lab`: about 144 KB of JS); the engine worker is a separate file, 44 KB raw (16.5 KB gzip).

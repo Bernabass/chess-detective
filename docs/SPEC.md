@@ -590,7 +590,7 @@ Analysis runs automatically (debounced ~300 ms) after edits; Prove runs only on 
 
 ### 9.3 Permalinks and examples
 
-The URL holds the position (`/lab?fen=…`, URL-encoded), so any analysis can be shared. An example gallery shows 8–10 fixture positions with teaser titles ("Who moved last?", "Count the captures", "The impossible start").
+The URL holds the position (`/lab?fen=…`, URL-encoded), so any analysis can be shared. "Copy link" copies it, and "Open in Lichess" opens the position in Lichess's board editor. An example gallery shows 8–10 fixture positions with teaser titles ("Who moved last?", "Count the captures", "The impossible start"). (Buttons added 2026-10-23.)
 
 ### 9.4 Worker protocol
 
@@ -775,7 +775,7 @@ Daily: solved attempts for the puzzle with `is_archive = false`, ordered per §8
 
 ### 11.1 Security checklist
 
-Argon2id passwords; hashed session tokens; secure cookie flags; origin check on state-changing requests; parameterized SQL only (sqlc); strict input validation and request body size limit (e.g. 16 KiB); security headers (CSP with `default-src 'self'` plus what Vite output and Comlink workers need, `X-Content-Type-Options`, `Referrer-Policy`, `frame-ancestors 'none'`); rate limits; no secrets in logs; solution never sent before an attempt finishes (tested); `return_to` accepts relative paths only (no open redirect).
+Argon2id passwords; hashed session tokens; secure cookie flags; origin check on state-changing requests; parameterized SQL only (sqlc); strict input validation and request body size limit (e.g. 16 KiB); security headers (CSP with `default-src 'self'` plus what Vite output and Comlink workers need, including `img-src 'self' data:` because the board's piece images are inline SVG data URIs; the theme bootstrap is an external script, so no `'unsafe-inline'` is needed, `X-Content-Type-Options`, `Referrer-Policy`, `frame-ancestors 'none'`); rate limits; no secrets in logs; solution never sent before an attempt finishes (tested); `return_to` accepts relative paths only (no open redirect).
 
 ### 11.2 Testing strategy
 

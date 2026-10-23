@@ -11,7 +11,7 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 | 2 | Retro analysis | done (2026-10-22) | `phase-2` |
 | 3 | Proof-game solver | done (2026-10-22) | `phase-3` |
 | 4 | Puzzle generator | done (2026-10-23) | `phase-4` |
-| 5 | Web shell and Lab | not started | |
+| 5 | Web shell and Lab | done (2026-10-23) | `phase-5` |
 | 6 | API core | not started | |
 | 7 | Daily UI, leaderboards, profiles, archive | not started | |
 | 8 | Sign in with Lichess | not started | |
@@ -24,11 +24,126 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 | Perft nodes/second (Node, start position depth 5) | ≈4.0M nodes/s (median of 3 runs: 3.4M, 4.0M, 4.2M); Kiwipete depth 4: 5.4M. Node 24.13, owner's Windows 10 machine, `pnpm --filter @retrograde/engine perft 5` | 2026-10-22 |
 | Solver median / p95 at N = 6, 8, 10 | find-one: 2 / 6 ms, 2 / 11 ms, 4 / 191 ms. count (cap 2): 2 / 5 ms, 2 / 33 ms, 2 / 167 ms (worst 436 ms). Median nodes 7–14. 50 targets of uniformly random games per N, `pnpm --filter @retrograde/engine bench` | 2026-10-22 |
 | Generator acceptance rate and time per candidate by N | Beam (W = 180, 200,000-node limit, `--jobs 4`), accepted / candidates and mean ms per candidate per job: N = 6: 68% / 20 ms, 7: 79% / 123 ms, 8: 58% / 282 ms, 9: 59% / 1.2 s, 10: 35% / 2.6 s, 11: 28% / 3.9 s, 12: 14% / 4.1 s. Whole 500-puzzle pool: 72 min; `verify` of the pool: 227 s. Heavy 8-ply uniqueness count (118,811 nodes): 2,328 ms with engine 0.3.0 → 1,250 ms with the incremental bound | 2026-10-23 |
-| Main-thread JS bundle (gzipped) | | |
+| Main-thread JS bundle (gzipped) | Main `index` 116.65 KB; `/lab` loads about 144 KB of JS in total (plus 10.6 KB CSS); engine worker separate, 16.5 KB gzip. `pnpm --filter @retrograde/web build` | 2026-10-23 |
 | Lighthouse accessibility, /daily and /lab | | |
 
 ## Phase log
 
+### Phase 5: Web shell and Lab (2026-10-23)
+
+**Done, by acceptance criterion**
+- **Routing and layout for every route.**
+  - Routes: `/`, `/daily`, `/daily/:number`, `/archive`, `/lab`, `/leaderboard`, `/u/:username`, `/login`, `/register`, `/about` and a 404 page, each lazily loaded (`apps/web/src/router.tsx`).
+  - Header with navigation, a mobile menu and a light / system / dark theme toggle; a footer with the server status.
+  - Pages that need the API are explanatory placeholders, and login and register show the disabled form layout.
+  - Tests: `routes.test.tsx` and `e2e/routes.spec.ts`.
+- **Visual design system** (SPEC §11.4).
+  - A "casebook" palette as CSS tokens, with paper in light mode and ink in dark mode.
+  - Fonts: Fraunces, Inter and IBM Plex Mono, self-hosted.
+  - A CSS-drawn board in matching colours, with the **cburnett** pieces bundled in chessground (GPLv2+; checked against Lichess's `COPYING.md`, recorded in DECISIONS).
+  - The theme is applied before first paint by an external blocking script, so the CSP needs no inline script (your addition 2).
+- **The Lab: edit, paste FEN, auto-analysis, detective notes with highlights, last moves with take-back, Prove with progress and Cancel, permalinks, example gallery.**
+  - **Editing:** drag on the board; drag from the palette; click-to-place (keyboard-usable, Escape disarms).
+  - **FEN field:** accepts partial FENs and shows parse errors inline. Side to move, castling and en passant controls. Start, Clear and Flip.
+  - **Analysis** runs in a Web Worker 300 ms after each edit.
+  - **Report:**
+    - a verdict banner (icon + word + colour);
+    - grouped notes that highlight squares and arrows on hover, focus or tap;
+    - last moves at depth 1–6, with Take it back (Back undoes it);
+    - Prove up to 16 plies in a second worker, with progress ("Searching 12-ply games…"), Cancel, and a proof player with a scrubber.
+  - **Links:** `/lab?fen=…` permalinks, plus "Copy link" and "Open in Lichess" (your addition 3).
+  - **Gallery:** 10 examples, including "A dead end two moves back" (your addition 1).
+  - Tests:
+    - `e2e/lab.spec.ts` (12 tests, including every example's verdict, the palette drag, click-to-place on a flipped board, no auto-castle, Cancel then Prove again, and Copy link);
+    - `Report.test.tsx`, `ProofPlayer.test.tsx`, `FenField.test.tsx`, `labState.test.ts`;
+    - `useEngine.test.tsx` (hook races);
+    - `api.test.ts` and `client.test.ts`.
+- **Works at 360 px; keyboard accessible; component tests for the report and notes.**
+  - Every route at 360 px has no horizontal scroll (e2e).
+  - axe finds no serious or critical violations on `/`, `/about`, `/login` and the Lab with a report, in both themes.
+  - A keyboard-only Lab session (skip link, FEN entry, click-to-place by keyboard, note highlight on focus) passes.
+  - `Report.test.tsx` covers the verdict banner, notes and last moves.
+- **Playwright: open the Lab with an illegal example, see the verdict and reason.** `lab.spec.ts` › "an illegal example shows the verdict and the reason": *Three pawns, two files* → "Illegal" plus "…the pawn on a3 has no possible starting file".
+- **/about** explains retrograde analysis with 3 interactive boards: reveal the last move, the capture count, and a playable proof game (e2e: `about page`).
+- **Also:**
+  - The engine's `onProgress` reports the ply count being searched; engine still 0.4.0.
+  - The fast suite was trimmed and the lint caches added, so `pnpm check` is about 70 s.
+  - CI runs the e2e suite.
+  - `.claude/rules/engine.md` was clarified (generator: node limits only).
+
+**Visual review (Playwright screenshots, 360 and 1280 px × light and dark, 44 per round)**
+- **Round 1 found 7 problems:**
+  - the gallery and proof-player boards showed coordinates (chessground draws them only at creation);
+  - file letters sat outside the board ("H" past the edge at 360 px);
+  - castling checkboxes wrapped one word per line;
+  - last-move rows collapsed to one word per line at 360 px;
+  - the rule badge overflowed its card;
+  - black palette pieces were nearly invisible in dark mode;
+  - the last-move highlight was too faint.
+- **Round 2 found 4 more:**
+  - click-to-place had no visual cue on the board;
+  - "…" separated from its move at line breaks;
+  - castling options were cramped at 1280 px;
+  - the "first move" icon looked like a "K".
+- **Round 3:** nothing left to fix.
+- Final images: `docs/screenshots/lab-{360,1280}-{light,dark}.png`.
+
+**Evidence**
+- `pnpm check`: all green in 73 s warm (lint 5 s with caches, typecheck 11 s, tests about 50 s, Go 6 s, hooks 1 s).
+  - Engine: 267 unit tests, statements 93.1%, plus 34 property tests.
+  - Generator: 37 tests. Web: 8 files, 42 tests. golangci-lint `0 issues`, Go tests ok, hook test passed.
+- `pnpm test:e2e`: 35 passed.
+- Slow suites: not rerun this phase. The phase's only engine change is the additive `plies` field in `onProgress`, covered by a new fast test (`search.test.ts`). The changed slow tests (solver brute force, wismuth N ≤ 5, generator slow suite) last passed at `2d0cc24`, before this phase began.
+- Bundle (`vite build`):
+  - main `index` 370 KB raw / **116.65 KB gzip**;
+  - `/lab` adds LabPage 10.05 KB, Board (chessground + piece set) 16.17 KB and ProofPlayer 1.03 KB, all gzip;
+  - CSS 10.6 KB gzip;
+  - engine worker 44.13 KB raw (16.5 KB gzip), loaded separately.
+- **Self-review** (separate review agent).
+  - It reran unit tests, typecheck, lint and e2e (33/33 at the time), and checked the built `index.html` (no inline script or style), hygiene and licenses.
+  - Fixed, from its findings:
+    1. Prove could stick on "Searching…" after leaving a position and coming back (no worker running). Abandoned runs now clear their state; there's a hook test for A → B → A.
+    2. While re-analysing, the old position's notes, take-backs and proof stayed clickable. The stale report is now dimmed and `inert`.
+    3. Chessground's `autoCastle` moved the rook when a king was dragged two squares in the editor. It's now off, with an e2e test.
+    4. The piece images are `data:` SVG, so the future CSP needs `img-src 'self' data:`. SPEC §11.1 and DECISIONS now say so.
+  - Smaller fixes:
+    - a worker that fails to load now rejects its calls instead of hanging;
+    - Prove progress is no longer announced on every update;
+    - the FEN error is a polite live region instead of an alert on every keystroke;
+    - Escape returns focus to the palette;
+    - Copy link works on insecure origins and with repeated clicks;
+    - gallery boards are hidden from screen readers (the link names them);
+    - the example e2e test iterates `EXAMPLES`;
+    - Cancel is followed by a second Prove;
+    - click-to-place is tested with the board flipped.
+
+**Known issues / follow-ups**
+- Lighthouse scores aren't recorded yet (planned with Phase 9's production server); axe covers the same accessibility rules in the e2e suite.
+- The Go server doesn't serve the web app yet (Phase 9 Dockerfile), so deep links like `/lab?fen=…` work in `pnpm dev` / `vite preview` only.
+- The board itself can't be operated by keyboard (chessground); the FEN field and click-to-place cover every edit.
+
+**How to try it** (VS Code terminal, PowerShell, in the project folder)
+
+1. Start the app:
+   ```powershell
+   pnpm --filter @retrograde/web dev
+   ```
+   Open http://localhost:5173. The footer says "Server: offline" unless the Go API is also running (`pnpm dev` starts both).
+2. In the Lab (`/lab`), click *Three pawns, two files* under "Cases to crack". You should see:
+   - **✗ Illegal** with the reason;
+   - hovering the first note outlines a2, b2 and a3 in red.
+3. Open *The bishop that ate the rook* and press **Prove it**. Within a second it finds a 12-ply proof. Drag the scrubber or click a move (5.O-O) to step through it.
+4. Edit: drag a black rook from the palette onto the board, or click the white knight in the palette and then click a square. The verdict updates by itself.
+5. Click **Take it back** on any possible last move, then press the browser's Back button to return.
+6. Press **Copy link** and paste it into a new tab: the same position opens. **Open in Lichess** opens it in Lichess's editor.
+7. Try `/about` (press **Reveal** and **Play the proof**), and the theme buttons in the header.
+8. Tests:
+   ```powershell
+   pnpm --filter @retrograde/web exec playwright install chromium   # once
+   pnpm test:e2e
+   pnpm --filter @retrograde/web shots                              # optional: screenshots into apps/web/screenshots/
+   ```
+   Expect `35 passed`. `pnpm check` should pass in about 75 s.
 ### Phase 4: Puzzle generator (2026-10-23)
 
 **Done, by acceptance criterion**
