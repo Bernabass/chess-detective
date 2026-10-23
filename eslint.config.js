@@ -32,6 +32,11 @@ export default tseslint.config(
     },
   },
   {
+    // Scripts served as-is to the browser (the theme bootstrap).
+    files: ['apps/web/public/**/*.js'],
+    languageOptions: { globals: globals.browser, sourceType: 'script' },
+  },
+  {
     files: ['apps/web/src/**/*.{ts,tsx}'],
     extends: [reactHooks.configs.flat.recommended, reactRefresh.configs.vite],
     languageOptions: { globals: globals.browser },
