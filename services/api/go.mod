@@ -3,6 +3,7 @@ module github.com/Bernabass/chess-detective/services/api
 go 1.27.0
 
 require (
+	github.com/corentings/chess/v2 v2.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/pressly/goose/v3 v3.29.0
 )
