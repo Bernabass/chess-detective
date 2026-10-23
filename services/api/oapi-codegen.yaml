@@ -5,3 +5,5 @@ generate:
   models: true
   std-http-server: true
   strict-server: true
+  # The request validator (kin-openapi) checks every request against the embedded spec.
+  embedded-spec: true

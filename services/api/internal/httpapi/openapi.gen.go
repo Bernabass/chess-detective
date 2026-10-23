@@ -7,11 +7,65 @@ package httpapi
 
 import (
 	"bytes"
+	"compress/flate"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"path"
+	"strings"
+	"time"
+
+	"github.com/getkin/kin-openapi/openapi3"
+	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// Defines values for AllTimeLeaderboardMetric.
+const (
+	AllTimeLeaderboardMetricCurrentStreak AllTimeLeaderboardMetric = "current_streak"
+	AllTimeLeaderboardMetricMaxStreak     AllTimeLeaderboardMetric = "max_streak"
+	AllTimeLeaderboardMetricSolved        AllTimeLeaderboardMetric = "solved"
+)
+
+// Valid indicates whether the value is a known member of the AllTimeLeaderboardMetric enum.
+func (e AllTimeLeaderboardMetric) Valid() bool {
+	switch e {
+	case AllTimeLeaderboardMetricCurrentStreak:
+		return true
+	case AllTimeLeaderboardMetricMaxStreak:
+		return true
+	case AllTimeLeaderboardMetricSolved:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AttemptStatus.
+const (
+	AttemptStatusFailed     AttemptStatus = "failed"
+	AttemptStatusInProgress AttemptStatus = "in_progress"
+	AttemptStatusSolved     AttemptStatus = "solved"
+)
+
+// Valid indicates whether the value is a known member of the AttemptStatus enum.
+func (e AttemptStatus) Valid() bool {
+	switch e {
+	case AttemptStatusFailed:
+		return true
+	case AttemptStatusInProgress:
+		return true
+	case AttemptStatusSolved:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for HealthDb.
 const (
@@ -49,6 +103,157 @@ func (e HealthStatus) Valid() bool {
 	}
 }
 
+// Defines values for HintKind.
+const (
+	Captures HintKind = "captures"
+	Move     HintKind = "move"
+	Movers   HintKind = "movers"
+)
+
+// Valid indicates whether the value is a known member of the HintKind enum.
+func (e HintKind) Valid() bool {
+	switch e {
+	case Captures:
+		return true
+	case Move:
+		return true
+	case Movers:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for GetAllTimeLeaderboardParamsMetric.
+const (
+	GetAllTimeLeaderboardParamsMetricCurrentStreak GetAllTimeLeaderboardParamsMetric = "current_streak"
+	GetAllTimeLeaderboardParamsMetricMaxStreak     GetAllTimeLeaderboardParamsMetric = "max_streak"
+	GetAllTimeLeaderboardParamsMetricSolved        GetAllTimeLeaderboardParamsMetric = "solved"
+)
+
+// Valid indicates whether the value is a known member of the GetAllTimeLeaderboardParamsMetric enum.
+func (e GetAllTimeLeaderboardParamsMetric) Valid() bool {
+	switch e {
+	case GetAllTimeLeaderboardParamsMetricCurrentStreak:
+		return true
+	case GetAllTimeLeaderboardParamsMetricMaxStreak:
+		return true
+	case GetAllTimeLeaderboardParamsMetricSolved:
+		return true
+	default:
+		return false
+	}
+}
+
+// AllTimeEntry defines model for AllTimeEntry.
+type AllTimeEntry struct {
+	Rank     int    `json:"rank"`
+	Username string `json:"username"`
+	Value    int    `json:"value"`
+}
+
+// AllTimeLeaderboard defines model for AllTimeLeaderboard.
+type AllTimeLeaderboard struct {
+	Entries []AllTimeEntry           `json:"entries"`
+	Metric  AllTimeLeaderboardMetric `json:"metric"`
+}
+
+// AllTimeLeaderboardMetric defines model for AllTimeLeaderboard.Metric.
+type AllTimeLeaderboardMetric string
+
+// Archive defines model for Archive.
+type Archive struct {
+	Page     int           `json:"page"`
+	PageSize int           `json:"pageSize"`
+	Puzzles  []ArchiveItem `json:"puzzles"`
+	Total    int           `json:"total"`
+}
+
+// ArchiveItem defines model for ArchiveItem.
+type ArchiveItem struct {
+	Day        openapi_types.Date `json:"day"`
+	Difficulty int                `json:"difficulty"`
+	Number     int                `json:"number"`
+	Plies      int                `json:"plies"`
+	Result     *ArchiveResult     `json:"result,omitempty"`
+}
+
+// ArchiveResult defines model for ArchiveResult.
+type ArchiveResult struct {
+	Guesses   int           `json:"guesses"`
+	HintsUsed int           `json:"hintsUsed"`
+	Status    AttemptStatus `json:"status"`
+}
+
+// Attempt defines model for Attempt.
+type Attempt struct {
+	// Archive Started after the puzzle's day; doesn't count for streaks or leaderboards.
+	Archive    bool          `json:"archive"`
+	FinishedAt *time.Time    `json:"finishedAt,omitempty"`
+	Guesses    []Guess       `json:"guesses"`
+	Hints      []Hint        `json:"hints"`
+	HintsUsed  int           `json:"hintsUsed"`
+	StartedAt  time.Time     `json:"startedAt"`
+	Status     AttemptStatus `json:"status"`
+}
+
+// AttemptStatus defines model for AttemptStatus.
+type AttemptStatus string
+
+// Credentials defines model for Credentials.
+type Credentials struct {
+	Password string `json:"password"`
+
+	// Username Example: holmes_221b
+	Username Username `json:"username"`
+}
+
+// DailyEntry defines model for DailyEntry.
+type DailyEntry struct {
+	Guesses int `json:"guesses"`
+	Hints   int `json:"hints"`
+	Rank    int `json:"rank"`
+
+	// Seconds Solve time, from the start of the attempt to the solving guess.
+	Seconds  int    `json:"seconds"`
+	Username string `json:"username"`
+}
+
+// DailyLeaderboard defines model for DailyLeaderboard.
+type DailyLeaderboard struct {
+	Entries []DailyEntry `json:"entries"`
+	Number  int          `json:"number"`
+	You     *DailyEntry  `json:"you,omitempty"`
+}
+
+// Empty An empty JSON object (state-changing requests always send a JSON body).
+type Empty = map[string]interface{}
+
+// Guess defines model for Guess.
+type Guess struct {
+	// Feedback One letter per ply, G (right move, right ply), Y (right move, another ply of the same colour) or X.
+	//
+	// Example: YGYGGX
+	Feedback string   `json:"feedback"`
+	Moves    []string `json:"moves"`
+}
+
+// GuessRequest defines model for GuessRequest.
+type GuessRequest struct {
+	// Moves UCI moves like e2e4 or e7e8q (checked by the server; malformed moves are a 422 with `ply`).
+	Moves []string `json:"moves"`
+}
+
+// GuessResult defines model for GuessResult.
+type GuessResult struct {
+	Feedback    string `json:"feedback"`
+	GuessesUsed int    `json:"guessesUsed"`
+
+	// Solution Present only when this guess finished the attempt.
+	Solution *[]string     `json:"solution,omitempty"`
+	Status   AttemptStatus `json:"status"`
+}
+
 // Health defines model for Health.
 type Health struct {
 	Db     HealthDb     `json:"db"`
@@ -61,22 +266,181 @@ type HealthDb string
 // HealthStatus defines model for Health.Status.
 type HealthStatus string
 
+// Hint defines model for Hint.
+type Hint struct {
+	// Black (movers) Piece types Black moved at least once.
+	Black *[]string `json:"black,omitempty"`
+	Kind  HintKind  `json:"kind"`
+
+	// Plies (captures) 1-based plies where a capture happens.
+	Plies *[]int `json:"plies,omitempty"`
+
+	// Ply (move) 1-based ply of the revealed solution move.
+	Ply *int    `json:"ply,omitempty"`
+	San *string `json:"san,omitempty"`
+
+	// Text The hint in plain English.
+	//
+	// Example: White moved: knight, pawn. Black moved: knight.
+	Text string  `json:"text"`
+	Uci  *string `json:"uci,omitempty"`
+
+	// White (movers) Piece types White moved at least once.
+	White *[]string `json:"white,omitempty"`
+}
+
+// HintKind defines model for Hint.Kind.
+type HintKind string
+
+// HintResult defines model for HintResult.
+type HintResult struct {
+	Hint      Hint `json:"hint"`
+	HintIndex int  `json:"hintIndex"`
+}
+
+// Me defines model for Me.
+type Me struct {
+	Guest    bool    `json:"guest"`
+	Stats    Stats   `json:"stats"`
+	Username *string `json:"username,omitempty"`
+}
+
 // Problem RFC 9457 problem details, sent as application/problem+json.
 type Problem struct {
 	Detail   *string `json:"detail,omitempty"`
 	Instance *string `json:"instance,omitempty"`
-	Status   int     `json:"status"`
-	Title    string  `json:"title"`
+
+	// Ply For an invalid guess, the 1-based ply of the offending move (like hint plies).
+	Ply    *int   `json:"ply,omitempty"`
+	Status int    `json:"status"`
+	Title  string `json:"title"`
 
 	// Type Example: about:blank
 	Type string `json:"type"`
 }
 
+// Profile defines model for Profile.
+type Profile struct {
+	Joined   time.Time `json:"joined"`
+	Stats    Stats     `json:"stats"`
+	Username string    `json:"username"`
+}
+
+// Puzzle defines model for Puzzle.
+type Puzzle struct {
+	Attempt    *Attempt           `json:"attempt,omitempty"`
+	Day        openapi_types.Date `json:"day"`
+	Difficulty int                `json:"difficulty"`
+	Number     int                `json:"number"`
+	Plies      int                `json:"plies"`
+
+	// Solution UCI moves; only present once the caller's attempt is finished.
+	Solution *[]string `json:"solution,omitempty"`
+
+	// Target Target key (FEN placement and side to move).
+	//
+	// Example: rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w
+	Target string `json:"target"`
+}
+
+// Stats defines model for Stats.
+type Stats struct {
+	AverageHints  float32 `json:"averageHints"`
+	CurrentStreak int     `json:"currentStreak"`
+
+	// GuessDistribution Solves in 1, 2, …, 6 guesses, then failed attempts (7 entries).
+	GuessDistribution []int `json:"guessDistribution"`
+	MaxStreak         int   `json:"maxStreak"`
+	Played            int   `json:"played"`
+	Solved            int   `json:"solved"`
+
+	// WinRate solved / played, 0 when nothing was played.
+	WinRate float32 `json:"winRate"`
+}
+
+// Username Example: holmes_221b
+type Username = string
+
+// Number defines model for Number.
+type Number = int
+
+// GetArchiveParams defines parameters for GetArchive.
+type GetArchiveParams struct {
+	Page *int `form:"page,omitempty" json:"page,omitempty"`
+}
+
+// GetAllTimeLeaderboardParams defines parameters for GetAllTimeLeaderboard.
+type GetAllTimeLeaderboardParams struct {
+	Metric GetAllTimeLeaderboardParamsMetric `form:"metric" json:"metric"`
+}
+
+// GetAllTimeLeaderboardParamsMetric defines parameters for GetAllTimeLeaderboard.
+type GetAllTimeLeaderboardParamsMetric string
+
+// GetDailyLeaderboardParams defines parameters for GetDailyLeaderboard.
+type GetDailyLeaderboardParams struct {
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// LoginJSONRequestBody defines body for Login for application/json ContentType.
+type LoginJSONRequestBody = Credentials
+
+// RegisterJSONRequestBody defines body for Register for application/json ContentType.
+type RegisterJSONRequestBody = Credentials
+
+// SubmitGuessJSONRequestBody defines body for SubmitGuess for application/json ContentType.
+type SubmitGuessJSONRequestBody = GuessRequest
+
+// TakeHintJSONRequestBody defines body for TakeHint for application/json ContentType.
+type TakeHintJSONRequestBody = Empty
+
+// StartPuzzleJSONRequestBody defines body for StartPuzzle for application/json ContentType.
+type StartPuzzleJSONRequestBody = Empty
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// GetArchive Past daily puzzles, newest first
+	// (GET /archive)
+	GetArchive(w http.ResponseWriter, r *http.Request, params GetArchiveParams)
+	// Login Sign in
+	// (POST /auth/login)
+	Login(w http.ResponseWriter, r *http.Request)
+	// Logout Sign out
+	// (POST /auth/logout)
+	Logout(w http.ResponseWriter, r *http.Request)
+	// GetMe The current player
+	// (GET /auth/me)
+	GetMe(w http.ResponseWriter, r *http.Request)
+	// Register Create an account
+	// (POST /auth/register)
+	Register(w http.ResponseWriter, r *http.Request)
+	// GetToday Today's puzzle
+	// (GET /daily)
+	GetToday(w http.ResponseWriter, r *http.Request)
+	// GetPuzzle A puzzle by number (today's or an archive puzzle)
+	// (GET /daily/{number})
+	GetPuzzle(w http.ResponseWriter, r *http.Request, number Number)
+	// SubmitGuess Submit a guess
+	// (POST /daily/{number}/guesses)
+	SubmitGuess(w http.ResponseWriter, r *http.Request, number Number)
+	// TakeHint Take the next hint
+	// (POST /daily/{number}/hints)
+	TakeHint(w http.ResponseWriter, r *http.Request, number Number)
+	// StartPuzzle Start (or resume) the caller's attempt
+	// (POST /daily/{number}/start)
+	StartPuzzle(w http.ResponseWriter, r *http.Request, number Number)
 	// GetHealth Liveness and database check
 	// (GET /health)
 	GetHealth(w http.ResponseWriter, r *http.Request)
+	// GetAllTimeLeaderboard The all-time leaderboard (top 100)
+	// (GET /leaderboards/all-time)
+	GetAllTimeLeaderboard(w http.ResponseWriter, r *http.Request, params GetAllTimeLeaderboardParams)
+	// GetDailyLeaderboard A daily puzzle's leaderboard
+	// (GET /leaderboards/daily/{number})
+	GetDailyLeaderboard(w http.ResponseWriter, r *http.Request, number Number, params GetDailyLeaderboardParams)
+	// GetUser A public profile
+	// (GET /users/{username})
+	GetUser(w http.ResponseWriter, r *http.Request, username Username)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -88,11 +452,319 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
+// GetArchive operation middleware
+func (siw *ServerInterfaceWrapper) GetArchive(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetArchiveParams
+
+	// ------------- Optional query parameter "page" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page", r.URL.Query(), &params.Page, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "page"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetArchive(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Login operation middleware
+func (siw *ServerInterfaceWrapper) Login(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Login(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Logout operation middleware
+func (siw *ServerInterfaceWrapper) Logout(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Logout(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMe operation middleware
+func (siw *ServerInterfaceWrapper) GetMe(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMe(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// Register operation middleware
+func (siw *ServerInterfaceWrapper) Register(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.Register(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetToday operation middleware
+func (siw *ServerInterfaceWrapper) GetToday(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetToday(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPuzzle operation middleware
+func (siw *ServerInterfaceWrapper) GetPuzzle(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPuzzle(w, r, number)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SubmitGuess operation middleware
+func (siw *ServerInterfaceWrapper) SubmitGuess(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SubmitGuess(w, r, number)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// TakeHint operation middleware
+func (siw *ServerInterfaceWrapper) TakeHint(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TakeHint(w, r, number)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartPuzzle operation middleware
+func (siw *ServerInterfaceWrapper) StartPuzzle(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartPuzzle(w, r, number)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetHealth operation middleware
 func (siw *ServerInterfaceWrapper) GetHealth(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHealth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAllTimeLeaderboard operation middleware
+func (siw *ServerInterfaceWrapper) GetAllTimeLeaderboard(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAllTimeLeaderboardParams
+
+	// ------------- Required query parameter "metric" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "metric", r.URL.Query(), &params.Metric, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "metric"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "metric", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAllTimeLeaderboard(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetDailyLeaderboard operation middleware
+func (siw *ServerInterfaceWrapper) GetDailyLeaderboard(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetDailyLeaderboardParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetDailyLeaderboard(w, r, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUser operation middleware
+func (siw *ServerInterfaceWrapper) GetUser(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "username" -------------
+	var username Username
+
+	err = runtime.BindStyledParameterWithOptions("simple", "username", r.PathValue("username"), &username, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "username", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUser(w, r, username)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -223,11 +895,632 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	}
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/health", wrapper.GetHealth)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/me", wrapper.GetMe)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/register", wrapper.Register)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.Login)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.Logout)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/daily", wrapper.GetToday)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/daily/{number}", wrapper.GetPuzzle)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/daily/{number}/start", wrapper.StartPuzzle)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/daily/{number}/guesses", wrapper.SubmitGuess)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/daily/{number}/hints", wrapper.TakeHint)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/leaderboards/daily/{number}", wrapper.GetDailyLeaderboard)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/leaderboards/all-time", wrapper.GetAllTimeLeaderboard)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/users/{username}", wrapper.GetUser)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/archive", wrapper.GetArchive)
 
 	return m
 }
 
 type ProblemApplicationProblemPlusJSONResponse Problem
+
+type GetArchiveRequestObject struct {
+	Params GetArchiveParams
+}
+
+type GetArchiveResponseObject interface {
+	VisitGetArchiveResponse(w http.ResponseWriter) error
+}
+
+type GetArchive200JSONResponse Archive
+
+func (response GetArchive200JSONResponse) VisitGetArchiveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetArchivedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetArchivedefaultApplicationProblemPlusJSONResponse) VisitGetArchiveResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LoginRequestObject struct {
+	Body *LoginJSONRequestBody
+}
+
+type LoginResponseObject interface {
+	VisitLoginResponse(w http.ResponseWriter) error
+}
+
+type Login200JSONResponse Me
+
+func (response Login200JSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Login401ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response Login401ApplicationProblemPlusJSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Login429ApplicationProblemPlusJSONResponse Problem
+
+func (response Login429ApplicationProblemPlusJSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LogindefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response LogindefaultApplicationProblemPlusJSONResponse) VisitLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type LogoutRequestObject struct {
+}
+
+type LogoutResponseObject interface {
+	VisitLogoutResponse(w http.ResponseWriter) error
+}
+
+type Logout204Response struct {
+}
+
+func (response Logout204Response) VisitLogoutResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type LogoutdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response LogoutdefaultApplicationProblemPlusJSONResponse) VisitLogoutResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMeRequestObject struct {
+}
+
+type GetMeResponseObject interface {
+	VisitGetMeResponse(w http.ResponseWriter) error
+}
+
+type GetMe200JSONResponse Me
+
+func (response GetMe200JSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMedefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetMedefaultApplicationProblemPlusJSONResponse) VisitGetMeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterRequestObject struct {
+	Body *RegisterJSONRequestBody
+}
+
+type RegisterResponseObject interface {
+	VisitRegisterResponse(w http.ResponseWriter) error
+}
+
+type Register201JSONResponse Me
+
+func (response Register201JSONResponse) VisitRegisterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Register409ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response Register409ApplicationProblemPlusJSONResponse) VisitRegisterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type Register429ApplicationProblemPlusJSONResponse Problem
+
+func (response Register429ApplicationProblemPlusJSONResponse) VisitRegisterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response RegisterdefaultApplicationProblemPlusJSONResponse) VisitRegisterResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTodayRequestObject struct {
+}
+
+type GetTodayResponseObject interface {
+	VisitGetTodayResponse(w http.ResponseWriter) error
+}
+
+type GetToday200JSONResponse Puzzle
+
+func (response GetToday200JSONResponse) VisitGetTodayResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetToday404ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetToday404ApplicationProblemPlusJSONResponse) VisitGetTodayResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetTodaydefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetTodaydefaultApplicationProblemPlusJSONResponse) VisitGetTodayResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPuzzleRequestObject struct {
+	Number Number `json:"number"`
+}
+
+type GetPuzzleResponseObject interface {
+	VisitGetPuzzleResponse(w http.ResponseWriter) error
+}
+
+type GetPuzzle200JSONResponse Puzzle
+
+func (response GetPuzzle200JSONResponse) VisitGetPuzzleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPuzzle404ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPuzzle404ApplicationProblemPlusJSONResponse) VisitGetPuzzleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPuzzledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetPuzzledefaultApplicationProblemPlusJSONResponse) VisitGetPuzzleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitGuessRequestObject struct {
+	Number Number `json:"number"`
+	Body   *SubmitGuessJSONRequestBody
+}
+
+type SubmitGuessResponseObject interface {
+	VisitSubmitGuessResponse(w http.ResponseWriter) error
+}
+
+type SubmitGuess200JSONResponse GuessResult
+
+func (response SubmitGuess200JSONResponse) VisitSubmitGuessResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitGuess404ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response SubmitGuess404ApplicationProblemPlusJSONResponse) VisitSubmitGuessResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitGuess409ApplicationProblemPlusJSONResponse Problem
+
+func (response SubmitGuess409ApplicationProblemPlusJSONResponse) VisitSubmitGuessResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitGuess422ApplicationProblemPlusJSONResponse Problem
+
+func (response SubmitGuess422ApplicationProblemPlusJSONResponse) VisitSubmitGuessResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(422)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitGuess429ApplicationProblemPlusJSONResponse Problem
+
+func (response SubmitGuess429ApplicationProblemPlusJSONResponse) VisitSubmitGuessResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SubmitGuessdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response SubmitGuessdefaultApplicationProblemPlusJSONResponse) VisitSubmitGuessResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TakeHintRequestObject struct {
+	Number Number `json:"number"`
+	Body   *TakeHintJSONRequestBody
+}
+
+type TakeHintResponseObject interface {
+	VisitTakeHintResponse(w http.ResponseWriter) error
+}
+
+type TakeHint200JSONResponse HintResult
+
+func (response TakeHint200JSONResponse) VisitTakeHintResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TakeHint404ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response TakeHint404ApplicationProblemPlusJSONResponse) VisitTakeHintResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TakeHint409ApplicationProblemPlusJSONResponse Problem
+
+func (response TakeHint409ApplicationProblemPlusJSONResponse) VisitTakeHintResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TakeHint429ApplicationProblemPlusJSONResponse Problem
+
+func (response TakeHint429ApplicationProblemPlusJSONResponse) VisitTakeHintResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TakeHintdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response TakeHintdefaultApplicationProblemPlusJSONResponse) VisitTakeHintResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartPuzzleRequestObject struct {
+	Number Number `json:"number"`
+	Body   *StartPuzzleJSONRequestBody
+}
+
+type StartPuzzleResponseObject interface {
+	VisitStartPuzzleResponse(w http.ResponseWriter) error
+}
+
+type StartPuzzle200JSONResponse Puzzle
+
+func (response StartPuzzle200JSONResponse) VisitStartPuzzleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartPuzzle404ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response StartPuzzle404ApplicationProblemPlusJSONResponse) VisitStartPuzzleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartPuzzle429ApplicationProblemPlusJSONResponse Problem
+
+func (response StartPuzzle429ApplicationProblemPlusJSONResponse) VisitStartPuzzleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartPuzzledefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response StartPuzzledefaultApplicationProblemPlusJSONResponse) VisitStartPuzzleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
 
 type GetHealthRequestObject struct {
 }
@@ -281,11 +1574,200 @@ func (response GetHealthdefaultApplicationProblemPlusJSONResponse) VisitGetHealt
 	return err
 }
 
+type GetAllTimeLeaderboardRequestObject struct {
+	Params GetAllTimeLeaderboardParams
+}
+
+type GetAllTimeLeaderboardResponseObject interface {
+	VisitGetAllTimeLeaderboardResponse(w http.ResponseWriter) error
+}
+
+type GetAllTimeLeaderboard200JSONResponse AllTimeLeaderboard
+
+func (response GetAllTimeLeaderboard200JSONResponse) VisitGetAllTimeLeaderboardResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAllTimeLeaderboarddefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetAllTimeLeaderboarddefaultApplicationProblemPlusJSONResponse) VisitGetAllTimeLeaderboardResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDailyLeaderboardRequestObject struct {
+	Number Number `json:"number"`
+	Params GetDailyLeaderboardParams
+}
+
+type GetDailyLeaderboardResponseObject interface {
+	VisitGetDailyLeaderboardResponse(w http.ResponseWriter) error
+}
+
+type GetDailyLeaderboard200JSONResponse DailyLeaderboard
+
+func (response GetDailyLeaderboard200JSONResponse) VisitGetDailyLeaderboardResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDailyLeaderboard404ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetDailyLeaderboard404ApplicationProblemPlusJSONResponse) VisitGetDailyLeaderboardResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetDailyLeaderboarddefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetDailyLeaderboarddefaultApplicationProblemPlusJSONResponse) VisitGetDailyLeaderboardResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUserRequestObject struct {
+	Username Username `json:"username"`
+}
+
+type GetUserResponseObject interface {
+	VisitGetUserResponse(w http.ResponseWriter) error
+}
+
+type GetUser200JSONResponse Profile
+
+func (response GetUser200JSONResponse) VisitGetUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUser404ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetUser404ApplicationProblemPlusJSONResponse) VisitGetUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetUserdefaultApplicationProblemPlusJSONResponse struct {
+	Body       Problem
+	StatusCode int
+}
+
+func (response GetUserdefaultApplicationProblemPlusJSONResponse) VisitGetUserResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// GetArchive Past daily puzzles, newest first
+	// (GET /archive)
+	GetArchive(ctx context.Context, request GetArchiveRequestObject) (GetArchiveResponseObject, error)
+	// Login Sign in
+	// (POST /auth/login)
+	Login(ctx context.Context, request LoginRequestObject) (LoginResponseObject, error)
+	// Logout Sign out
+	// (POST /auth/logout)
+	Logout(ctx context.Context, request LogoutRequestObject) (LogoutResponseObject, error)
+	// GetMe The current player
+	// (GET /auth/me)
+	GetMe(ctx context.Context, request GetMeRequestObject) (GetMeResponseObject, error)
+	// Register Create an account
+	// (POST /auth/register)
+	Register(ctx context.Context, request RegisterRequestObject) (RegisterResponseObject, error)
+	// GetToday Today's puzzle
+	// (GET /daily)
+	GetToday(ctx context.Context, request GetTodayRequestObject) (GetTodayResponseObject, error)
+	// GetPuzzle A puzzle by number (today's or an archive puzzle)
+	// (GET /daily/{number})
+	GetPuzzle(ctx context.Context, request GetPuzzleRequestObject) (GetPuzzleResponseObject, error)
+	// SubmitGuess Submit a guess
+	// (POST /daily/{number}/guesses)
+	SubmitGuess(ctx context.Context, request SubmitGuessRequestObject) (SubmitGuessResponseObject, error)
+	// TakeHint Take the next hint
+	// (POST /daily/{number}/hints)
+	TakeHint(ctx context.Context, request TakeHintRequestObject) (TakeHintResponseObject, error)
+	// StartPuzzle Start (or resume) the caller's attempt
+	// (POST /daily/{number}/start)
+	StartPuzzle(ctx context.Context, request StartPuzzleRequestObject) (StartPuzzleResponseObject, error)
 	// GetHealth Liveness and database check
 	// (GET /health)
 	GetHealth(ctx context.Context, request GetHealthRequestObject) (GetHealthResponseObject, error)
+	// GetAllTimeLeaderboard The all-time leaderboard (top 100)
+	// (GET /leaderboards/all-time)
+	GetAllTimeLeaderboard(ctx context.Context, request GetAllTimeLeaderboardRequestObject) (GetAllTimeLeaderboardResponseObject, error)
+	// GetDailyLeaderboard A daily puzzle's leaderboard
+	// (GET /leaderboards/daily/{number})
+	GetDailyLeaderboard(ctx context.Context, request GetDailyLeaderboardRequestObject) (GetDailyLeaderboardResponseObject, error)
+	// GetUser A public profile
+	// (GET /users/{username})
+	GetUser(ctx context.Context, request GetUserRequestObject) (GetUserResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -327,6 +1809,297 @@ type strictHandler struct {
 	options     StrictHTTPServerOptions
 }
 
+// GetArchive operation middleware
+func (sh *strictHandler) GetArchive(w http.ResponseWriter, r *http.Request, params GetArchiveParams) {
+	var request GetArchiveRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetArchive(ctx, request.(GetArchiveRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetArchive")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetArchiveResponseObject); ok {
+		if err := validResponse.VisitGetArchiveResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// Login operation middleware
+func (sh *strictHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var request LoginRequestObject
+
+	var body LoginJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Login(ctx, request.(LoginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Login")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LoginResponseObject); ok {
+		if err := validResponse.VisitLoginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// Logout operation middleware
+func (sh *strictHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	var request LogoutRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Logout(ctx, request.(LogoutRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Logout")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LogoutResponseObject); ok {
+		if err := validResponse.VisitLogoutResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMe operation middleware
+func (sh *strictHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	var request GetMeRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMe(ctx, request.(GetMeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMe")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMeResponseObject); ok {
+		if err := validResponse.VisitGetMeResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// Register operation middleware
+func (sh *strictHandler) Register(w http.ResponseWriter, r *http.Request) {
+	var request RegisterRequestObject
+
+	var body RegisterJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.Register(ctx, request.(RegisterRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "Register")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RegisterResponseObject); ok {
+		if err := validResponse.VisitRegisterResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetToday operation middleware
+func (sh *strictHandler) GetToday(w http.ResponseWriter, r *http.Request) {
+	var request GetTodayRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetToday(ctx, request.(GetTodayRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetToday")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetTodayResponseObject); ok {
+		if err := validResponse.VisitGetTodayResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPuzzle operation middleware
+func (sh *strictHandler) GetPuzzle(w http.ResponseWriter, r *http.Request, number Number) {
+	var request GetPuzzleRequestObject
+
+	request.Number = number
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPuzzle(ctx, request.(GetPuzzleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPuzzle")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPuzzleResponseObject); ok {
+		if err := validResponse.VisitGetPuzzleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SubmitGuess operation middleware
+func (sh *strictHandler) SubmitGuess(w http.ResponseWriter, r *http.Request, number Number) {
+	var request SubmitGuessRequestObject
+
+	request.Number = number
+
+	var body SubmitGuessJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SubmitGuess(ctx, request.(SubmitGuessRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SubmitGuess")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SubmitGuessResponseObject); ok {
+		if err := validResponse.VisitSubmitGuessResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// TakeHint operation middleware
+func (sh *strictHandler) TakeHint(w http.ResponseWriter, r *http.Request, number Number) {
+	var request TakeHintRequestObject
+
+	request.Number = number
+
+	var body TakeHintJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.TakeHint(ctx, request.(TakeHintRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "TakeHint")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(TakeHintResponseObject); ok {
+		if err := validResponse.VisitTakeHintResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartPuzzle operation middleware
+func (sh *strictHandler) StartPuzzle(w http.ResponseWriter, r *http.Request, number Number) {
+	var request StartPuzzleRequestObject
+
+	request.Number = number
+
+	var body StartPuzzleJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartPuzzle(ctx, request.(StartPuzzleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartPuzzle")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartPuzzleResponseObject); ok {
+		if err := validResponse.VisitStartPuzzleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetHealth operation middleware
 func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 	var request GetHealthRequestObject
@@ -349,4 +2122,247 @@ func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 	} else if response != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
 	}
+}
+
+// GetAllTimeLeaderboard operation middleware
+func (sh *strictHandler) GetAllTimeLeaderboard(w http.ResponseWriter, r *http.Request, params GetAllTimeLeaderboardParams) {
+	var request GetAllTimeLeaderboardRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAllTimeLeaderboard(ctx, request.(GetAllTimeLeaderboardRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAllTimeLeaderboard")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAllTimeLeaderboardResponseObject); ok {
+		if err := validResponse.VisitGetAllTimeLeaderboardResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetDailyLeaderboard operation middleware
+func (sh *strictHandler) GetDailyLeaderboard(w http.ResponseWriter, r *http.Request, number Number, params GetDailyLeaderboardParams) {
+	var request GetDailyLeaderboardRequestObject
+
+	request.Number = number
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetDailyLeaderboard(ctx, request.(GetDailyLeaderboardRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetDailyLeaderboard")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetDailyLeaderboardResponseObject); ok {
+		if err := validResponse.VisitGetDailyLeaderboardResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetUser operation middleware
+func (sh *strictHandler) GetUser(w http.ResponseWriter, r *http.Request, username Username) {
+	var request GetUserRequestObject
+
+	request.Username = username
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetUser(ctx, request.(GetUserRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetUser")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetUserResponseObject); ok {
+		if err := validResponse.VisitGetUserResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
+// Stored as a slice of fixed-width chunks rather than one concatenated
+// const string: with thousands of chunks the chained `+` fold is several
+// times slower for the Go compiler than parsing a slice literal.
+var swaggerSpec = []string{
+	"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",
+}
+
+// decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,
+// after base64-decoding and flate-decompressing the embedded blob.
+func decodeSpec() ([]byte, error) {
+	encoded := strings.Join(swaggerSpec, "")
+	compressed, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("error base64 decoding spec: %w", err)
+	}
+	zr := flate.NewReader(bytes.NewReader(compressed))
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(zr); err != nil {
+		return nil, fmt.Errorf("read flate: %w", err)
+	}
+	if err := zr.Close(); err != nil {
+		return nil, fmt.Errorf("close flate reader: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+var rawSpec = decodeSpecCached()
+
+// a naive cache of the decoded OpenAPI spec
+func decodeSpecCached() func() ([]byte, error) {
+	data, err := decodeSpec()
+	return func() ([]byte, error) {
+		return data, err
+	}
+}
+
+// Constructs a synthetic filesystem for resolving external references when loading openapi specifications.
+func PathToRawSpec(pathToFile string) map[string]func() ([]byte, error) {
+	res := make(map[string]func() ([]byte, error))
+	if len(pathToFile) > 0 {
+		res[pathToFile] = rawSpec
+	}
+
+	return res
+}
+
+// GetSpec returns the OpenAPI specification corresponding to the generated
+// code in this file. External references in the spec are resolved through
+// PathToRawSpec; externally-referenced files must be embedded in their
+// corresponding Go packages (via the import-mapping feature). URL-based
+// external refs are not supported.
+func GetSpec() (swagger *openapi3.T, err error) {
+	resolvePath := PathToRawSpec("")
+
+	loader := openapi3.NewLoader()
+	loader.IsExternalRefsAllowed = true
+	loader.ReadFromURIFunc = func(loader *openapi3.Loader, url *url.URL) ([]byte, error) {
+		pathToFile := url.String()
+		pathToFile = path.Clean(pathToFile)
+		getSpec, ok := resolvePath[pathToFile]
+		if !ok {
+			err1 := fmt.Errorf("path not found: %s", pathToFile)
+			return nil, err1
+		}
+		return getSpec()
+	}
+	var specData []byte
+	specData, err = rawSpec()
+	if err != nil {
+		return
+	}
+	swagger, err = loader.LoadFromData(specData)
+	if err != nil {
+		return
+	}
+	return
+}
+
+// GetSpecJSON returns the raw JSON bytes of the embedded OpenAPI
+// specification: decompressed but not unmarshaled. External references
+// are not resolved here; the bytes are the spec exactly as embedded by
+// codegen. The result is cached at package init time, so repeated calls
+// are cheap.
+func GetSpecJSON() ([]byte, error) {
+	return rawSpec()
+}
+
+// GetSwagger returns the OpenAPI specification corresponding to the
+// generated code in this file.
+//
+// Deprecated: GetSwagger predates kin-openapi renaming openapi3.Swagger
+// to openapi3.T. Use [GetSpec] instead. This wrapper is retained for
+// backwards compatibility.
+func GetSwagger() (*openapi3.T, error) {
+	return GetSpec()
 }

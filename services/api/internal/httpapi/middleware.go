@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"time"
@@ -144,25 +143,5 @@ func withRecover(logger *slog.Logger, next http.Handler) http.Handler {
 			writeProblem(w, http.StatusInternalServerError, "")
 		}()
 		next.ServeHTTP(w, r)
-	})
-}
-
-// problem is an RFC 9457 problem details body.
-type problem struct {
-	Type   string `json:"type"`
-	Title  string `json:"title"`
-	Status int    `json:"status"`
-	Detail string `json:"detail,omitempty"`
-}
-
-// writeProblem sends an application/problem+json error. detail must never contain internal error text.
-func writeProblem(w http.ResponseWriter, status int, detail string) {
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(problem{
-		Type:   "about:blank",
-		Title:  http.StatusText(status),
-		Status: status,
-		Detail: detail,
 	})
 }
