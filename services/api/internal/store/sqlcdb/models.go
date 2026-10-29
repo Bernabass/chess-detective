@@ -126,9 +126,10 @@ type Session struct {
 }
 
 type User struct {
-	ID            int64
-	Username      string
-	PasswordHash  *string
-	LichessUserID *string
-	CreatedAt     time.Time
+	ID              int64
+	Username        string
+	PasswordHash    *string
+	LichessUserID   *string
+	CreatedAt       time.Time
+	LichessUsername *string
 }

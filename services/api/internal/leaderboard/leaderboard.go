@@ -47,6 +47,8 @@ type Profile struct {
 	Username string
 	Joined   time.Time
 	Stats    daily.PlayerStats
+	// LichessID and LichessUsername are set for users who signed in with Lichess.
+	LichessID, LichessUsername string
 }
 
 // Service reads leaderboards.
@@ -117,5 +119,9 @@ func (s *Service) Profile(ctx context.Context, username string) (Profile, error)
 	if err != nil {
 		return Profile{}, err //nolint:wrapcheck // already wrapped
 	}
-	return Profile{Username: row.Username, Joined: row.CreatedAt, Stats: st}, nil
+	p := Profile{Username: row.Username, Joined: row.CreatedAt, Stats: st}
+	if row.LichessUserID != nil && row.LichessUsername != nil {
+		p.LichessID, p.LichessUsername = *row.LichessUserID, *row.LichessUsername
+	}
+	return p, nil
 }

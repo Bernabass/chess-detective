@@ -30,6 +30,7 @@ import (
 	"github.com/Bernabass/chess-detective/services/api/internal/daily"
 	"github.com/Bernabass/chess-detective/services/api/internal/httpapi"
 	"github.com/Bernabass/chess-detective/services/api/internal/leaderboard"
+	"github.com/Bernabass/chess-detective/services/api/internal/lichess"
 	"github.com/Bernabass/chess-detective/services/api/internal/store"
 )
 
@@ -213,10 +214,20 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	clk := clock.Real{}
 	dailySvc := &daily.Service{Store: st, Clock: clk}
 	handler := httpapi.NewHandler(httpapi.Options{
-		Logger:         logger,
-		DB:             st,
-		Clock:          clk,
-		Auth:           &auth.Service{Store: st, Clock: clk},
+		Logger: logger,
+		DB:     st,
+		Clock:  clk,
+		Auth: &auth.Service{
+			Store: st,
+			Clock: clk,
+			Lichess: &lichess.Client{
+				BaseURL:  cfg.LichessBaseURL,
+				ClientID: cfg.LichessClientID,
+				HTTP:     &http.Client{Timeout: 10 * time.Second},
+			},
+			LichessCallback: strings.TrimSuffix(cfg.BaseURL.String(), "/") + "/api/auth/lichess/callback",
+			Logger:          logger,
+		},
 		Daily:          dailySvc,
 		Leaderboard:    &leaderboard.Service{Store: st, Clock: clk, Puzzles: dailySvc},
 		Limits:         httpapi.DefaultLimits(clk, cfg.RateLimitScale),

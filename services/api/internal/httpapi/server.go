@@ -29,18 +29,21 @@ type Limits struct {
 	AuthPerUsername *ratelimit.Limiter // login/register per username
 	PlayPerPlayer   *ratelimit.Limiter // guesses and hints per player
 	StartPerIP      *ratelimit.Limiter // POST /daily/{number}/start per client IP
+	OAuthStartPerIP *ratelimit.Limiter // GET /auth/lichess/start per client IP
 }
 
-// DefaultLimits are the production limits: 10/min for auth (per IP and per username), 30/min
-// for guesses and hints per player, 300/hour for starting puzzles per IP (generous: many users
-// share an IP behind carrier NAT or a campus network). scale multiplies them all
-// (RATE_LIMIT_SCALE: 1 in production, raised for the e2e tests).
+// DefaultLimits are the production limits (SPEC §10.6). Per IP they're generous, because many
+// real users share one behind carrier NAT or a campus network: 60/min for login and register,
+// 60/min for starting a Lichess sign-in, 300/hour for starting puzzles. The per-username login
+// limit, 10/min, is what stops password guessing. Guesses and hints: 30/min per player. scale
+// multiplies them all (RATE_LIMIT_SCALE: 1 in production, raised for the e2e tests).
 func DefaultLimits(c clock.Clock, scale int) Limits {
 	return Limits{
-		AuthPerIP:       ratelimit.New(c, 10*scale, time.Minute),
+		AuthPerIP:       ratelimit.New(c, 60*scale, time.Minute),
 		AuthPerUsername: ratelimit.New(c, 10*scale, time.Minute),
 		PlayPerPlayer:   ratelimit.New(c, 30*scale, time.Minute),
 		StartPerIP:      ratelimit.New(c, 300*scale, time.Hour),
+		OAuthStartPerIP: ratelimit.New(c, 60*scale, time.Minute),
 	}
 }
 
@@ -127,6 +130,11 @@ func NewHandler(opts Options) http.Handler {
 			return withCSRFCheck(opts.BaseURL, next)
 		}},
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			if r.URL.Path == "/api/auth/lichess/callback" { // a browser navigation, not an API call
+				opts.Logger.InfoContext(r.Context(), "lichess sign-in failed", "reason", "failed", "err", err)
+				http.Redirect(w, r, "/login?lichess=failed", http.StatusFound)
+				return
+			}
 			opts.Logger.InfoContext(r.Context(), "bad request parameters", "err", err)
 			writeProblem(w, http.StatusBadRequest, "The request parameters are invalid.")
 		},

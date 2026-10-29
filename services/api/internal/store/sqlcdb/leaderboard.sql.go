@@ -174,21 +174,30 @@ func (q *Queries) DailyLeaderboardEntry(ctx context.Context, arg DailyLeaderboar
 }
 
 const getProfile = `-- name: GetProfile :one
-SELECT u.username::text AS username, u.created_at, p.id AS player_id
+SELECT u.username::text AS username, u.created_at, p.id AS player_id,
+       u.lichess_user_id, u.lichess_username
 FROM users u
 JOIN players p ON p.user_id = u.id
 WHERE u.username = $1
 `
 
 type GetProfileRow struct {
-	Username  string
-	CreatedAt time.Time
-	PlayerID  int64
+	Username        string
+	CreatedAt       time.Time
+	PlayerID        int64
+	LichessUserID   *string
+	LichessUsername *string
 }
 
 func (q *Queries) GetProfile(ctx context.Context, username string) (GetProfileRow, error) {
 	row := q.db.QueryRow(ctx, getProfile, username)
 	var i GetProfileRow
-	err := row.Scan(&i.Username, &i.CreatedAt, &i.PlayerID)
+	err := row.Scan(
+		&i.Username,
+		&i.CreatedAt,
+		&i.PlayerID,
+		&i.LichessUserID,
+		&i.LichessUsername,
+	)
 	return i, err
 }

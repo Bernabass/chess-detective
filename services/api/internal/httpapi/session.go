@@ -16,6 +16,8 @@ type requestState struct {
 	w       http.ResponseWriter
 	session *auth.Session
 	ip      netip.Addr
+	// oauthState is the rg_oauth cookie: the Lichess sign-in this browser started.
+	oauthState string
 }
 
 const stateKey ctxKey = iota + 100
@@ -34,6 +36,9 @@ func stateOf(ctx context.Context) *requestState {
 func (s *Server) withSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		st := &requestState{w: w, ip: clientIP(r, s.trustedProxies)}
+		if c, err := r.Cookie(oauthCookie); err == nil {
+			st.oauthState = c.Value
+		}
 		if c, err := r.Cookie(auth.CookieName); err == nil && s.auth != nil {
 			sess, refreshed, ok, err := s.auth.Resolve(r.Context(), c.Value)
 			switch {

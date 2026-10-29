@@ -133,6 +133,76 @@ paths:
         default:
           $ref: '#/components/responses/Problem'
 
+  /auth/lichess/start:
+    get:
+      operationId: lichessStart
+      summary: Start Sign in with Lichess
+      description: |
+        A browser navigation, not an API call (SPEC §10.6). Creates a one-time state (stored
+        hashed, with the PKCE code verifier, the caller's guest player and return_to, for 10
+        minutes), binds it to this browser with the rg_oauth cookie, and redirects to Lichess's
+        authorization page. Rate limited per IP; when limited, it redirects to
+        /login?lichess=busy instead.
+      tags: [auth]
+      parameters:
+        - name: return_to
+          in: query
+          required: false
+          description: Where to go afterwards. Only paths on this site; anything else becomes /daily.
+          schema:
+            type: string
+      responses:
+        '302':
+          description: To Lichess (or to /login?lichess=busy).
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+
+  /auth/lichess/callback:
+    get:
+      operationId: lichessCallback
+      summary: Finish Sign in with Lichess
+      description: |
+        Where Lichess sends the browser back. Checks state against the rg_oauth cookie and the
+        stored state (single use, 10 minutes), exchanges the code, reads the Lichess account,
+        revokes the token at once (Lichess tokens are never stored or logged), finds the account
+        by its Lichess id only (never by username) or creates one, merges the guest, starts a
+        session and redirects to return_to. Any failure redirects to
+        /login?lichess=cancelled|expired|failed.
+      tags: [auth]
+      parameters:
+        # Plain strings without limits, so validation never rejects (and logs) a code or state.
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: error_description
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '302':
+          description: To return_to, or to /login?lichess=<reason>.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+
   /daily:
     get:
       operationId: getToday
@@ -711,6 +781,22 @@ components:
           format: date-time
         stats:
           $ref: '#/components/schemas/Stats'
+        lichess:
+          $ref: '#/components/schemas/LichessLink'
+
+    LichessLink:
+      type: object
+      additionalProperties: false
+      description: The user's Lichess account, for users who signed in with Lichess.
+      required: [username, url]
+      properties:
+        username:
+          type: string
+          example: Thibault
+        url:
+          type: string
+          format: uri
+          example: https://lichess.org/@/thibault
 
     ArchiveResult:
       type: object
