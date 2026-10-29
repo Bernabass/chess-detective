@@ -23,6 +23,7 @@ import {
   type Rng,
 } from '../src/index';
 import { makeMove } from '../src/core/makemove';
+import { dailyFeedback } from '../src/daily/feedback';
 import { isCastle, isEnPassant, isPromotion, movePromotion } from '../src/core/move';
 import { MAX_MOVES, generatePseudoMoves } from '../src/core/movegen';
 import { playRandomGame } from '../src/util/random-game';
@@ -213,27 +214,6 @@ console.log(
 
 // --- Feedback vectors (SPEC §8.3) ---------------------------------------------------------------
 
-/**
- * Reference implementation of the daily feedback: G where the guess move equals the solution move
- * at that ply; otherwise Y if it equals a not-yet-used solution move at another ply of the same
- * colour (leftmost first, plies processed left to right); otherwise X. Greens are assigned first.
- */
-function feedback(solution: readonly string[], guess: readonly string[]): string {
-  const out: string[] = guess.map((g, i) => (g === solution[i] ? 'G' : 'X'));
-  const used = solution.map((s, i) => s === guess[i]);
-  guess.forEach((g, i) => {
-    if (out[i] === 'G') return;
-    for (let j = i % 2; j < solution.length; j += 2) {
-      if (j !== i && !used[j] && solution[j] === g) {
-        out[i] = 'Y';
-        used[j] = true;
-        return;
-      }
-    }
-  });
-  return out.join('');
-}
-
 const split = (s: string): string[] => s.split(' ');
 const FEEDBACK_CASES: [string, string, string][] = [
   // [comment, solution, guess]; the first three are SPEC §8.3's table.
@@ -260,7 +240,7 @@ const feedbackVectors = FEEDBACK_CASES.map(([comment, solution, guess]) => ({
   comment,
   solution: split(solution),
   guess: split(guess),
-  feedback: feedback(split(solution), split(guess)),
+  feedback: dailyFeedback(split(solution), split(guess)),
 }));
 const SPEC_EXPECTED = ['YGYGGX', 'GYGXGY', 'GGGGGX'];
 SPEC_EXPECTED.forEach((want, i) => {
