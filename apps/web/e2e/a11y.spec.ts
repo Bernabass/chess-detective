@@ -24,6 +24,7 @@ const PAGES: Scan[] = [
   { name: 'home', path: '/' },
   { name: 'about', path: '/about' },
   { name: 'login', path: '/login' },
+  { name: 'login after a failed Lichess sign-in', path: '/login?lichess=failed' },
   // The Lab with a full report showing (verdict, notes, last moves).
   { name: 'lab', path: `/lab?fen=${encodeURIComponent('k7/8/8/8/8/PP6/PP6/K7 w - - 0 1')}` },
   {

@@ -10,8 +10,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readDotEnv, root, setting } from './env.mjs';
+import { startFakeLichess } from './fake-lichess.mjs';
 
 export const E2E_API_PORT = 8092;
+/** A fake lichess.org for Sign in with Lichess (scripts/fake-lichess.mjs). */
+export const FAKE_LICHESS_PORT = 8093;
 const PREVIEW = 'http://127.0.0.1:4173';
 const PAST_DAYS = 3;
 const DAYS = PAST_DAYS + 2; // through tomorrow, so "not released yet" can be tested
@@ -46,6 +49,8 @@ const binDir = mkdtempSync(join(tmpdir(), 'retrograde-e2e-'));
 const bin = join(binDir, process.platform === 'win32' ? 'retrograde.exe' : 'retrograde');
 go(['build', '-o', bin, './cmd/retrograde']);
 
+const fakeLichess = startFakeLichess(FAKE_LICHESS_PORT);
+
 const server = spawn(bin, ['serve'], {
   cwd: root,
   stdio: ['ignore', 'inherit', 'inherit'],
@@ -60,12 +65,14 @@ const server = spawn(bin, ['serve'], {
     // The tests register many accounts a minute from one IP (DECISIONS 2026-10-29).
     RATE_LIMIT_SCALE: '1000',
     LOG_LEVEL: 'warn',
+    LICHESS_BASE_URL: `http://127.0.0.1:${String(FAKE_LICHESS_PORT)}`,
   },
 });
 
 let exited = false;
 const cleanup = () => {
   if (!exited) server.kill();
+  fakeLichess.close();
   try {
     rmSync(binDir, { recursive: true, force: true });
   } catch {
