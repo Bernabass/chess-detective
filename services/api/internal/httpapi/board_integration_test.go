@@ -186,3 +186,49 @@ func TestArchive(t *testing.T) {
 	}
 	expectProblem(t, c.get("/api/archive?page=0"), http.StatusBadRequest)
 }
+
+// A skipped day ends the current streak everywhere it's shown, even without playing again:
+// it stands while the last solve was today or yesterday (UTC) and is 0 from the midnight after.
+func TestSkippedDayEndsTheStreak(t *testing.T) {
+	t.Parallel()
+	api := newAPI(t, nil)
+	irene := api.player("irene")
+	api.clock.Set(launch.AddDate(0, 0, 1).Add(12 * time.Hour)) // day of #2
+	irene.solve(2, 0, 0, 0)
+	api.clock.Set(launch.AddDate(0, 0, 2).Add(12 * time.Hour)) // day of #3
+	irene.solve(3, 0, 0, 0)
+
+	current := func() (me, profile any, board string) {
+		t.Helper()
+		me = irene.get("/api/auth/me").json(t)["stats"].(map[string]any)["currentStreak"]
+		profile = api.client().get("/api/users/irene").json(t)["stats"].(map[string]any)["currentStreak"]
+		var entries []string
+		for _, e := range api.client().get("/api/leaderboards/all-time?metric=current_streak").json(t)["entries"].([]any) {
+			m := e.(map[string]any)
+			entries = append(entries, fmt.Sprintf("%v %v", m["username"], m["value"]))
+		}
+		return me, profile, fmt.Sprint(entries)
+	}
+	for _, c := range []struct {
+		at                time.Time
+		want              float64
+		wantBoard, reason string
+	}{
+		{launch.AddDate(0, 0, 2).Add(23*time.Hour + 59*time.Minute), 2, "[irene 2]", "the day of the last solve"},
+		{launch.AddDate(0, 0, 3), 2, "[irene 2]", "the next day: today's puzzle is still ahead"},
+		{launch.AddDate(0, 0, 3).Add(23*time.Hour + 59*time.Minute), 2, "[irene 2]", "the last minute of the next day"},
+		{launch.AddDate(0, 0, 4), 0, "[]", "a whole day skipped"},
+		{launch.AddDate(0, 0, 30), 0, "[]", "a month later"},
+	} {
+		api.clock.Set(c.at)
+		me, profile, board := current()
+		if me != c.want || profile != c.want || board != c.wantBoard {
+			t.Errorf("%s (%s): /auth/me %v, profile %v, board %s; want %v, %v, %s",
+				c.reason, c.at.Format(time.DateTime), me, profile, board, c.want, c.want, c.wantBoard)
+		}
+	}
+	// The best streak is history, not current: it stays.
+	if s := api.client().get("/api/users/irene").json(t)["stats"].(map[string]any); s["maxStreak"] != float64(2) {
+		t.Fatalf("max streak after the lapse = %v", s["maxStreak"])
+	}
+}
