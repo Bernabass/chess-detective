@@ -95,7 +95,10 @@ describe('accounts', () => {
     );
     fireEvent.click(within(banner).getByRole('button', { name: 'Sign out' }));
     expect(await within(banner).findByRole('link', { name: 'Sign in' })).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe('/');
+    // The header updates as soon as /auth/me is re-read; the redirect home follows.
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/');
+    });
   });
 
   it('shows Sign in for a guest, coming back to the page', async () => {
