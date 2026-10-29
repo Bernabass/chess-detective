@@ -2,11 +2,13 @@ import { expect, test } from '@playwright/test';
 
 const ROUTES: [string, RegExp][] = [
   ['/', /Don't ask for the best move/],
-  ['/daily', /Daily proof game/],
-  ['/daily/3', /Daily proof game #3/],
+  ['/daily', /Retrograde #\d+/],
+  ['/daily/3', /Retrograde #3/],
   ['/archive', /Archive/],
   ['/leaderboard', /Leaderboard/],
   ['/u/holmes', /holmes/],
+  // The longest possible username (20 characters) must wrap, not widen the page.
+  ['/u/' + 'w'.repeat(20), /w{20}/],
   ['/login', /Sign in/],
   ['/register', /Create an account/],
   ['/about', /Thinking backwards/],
