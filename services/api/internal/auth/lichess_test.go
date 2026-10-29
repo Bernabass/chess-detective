@@ -89,3 +89,21 @@ func TestLichessReason(t *testing.T) {
 		}
 	}
 }
+
+func TestLichessUserCaused(t *testing.T) {
+	for err, want := range map[error]bool{
+		ErrLichessCancelled:                                          true,
+		fmt.Errorf("%w: expired", ErrLichessState):                   true,
+		ErrLichessBadCallback:                                        true,
+		fmt.Errorf("%w: token", ErrLichessFailed):                    false,
+		fmt.Errorf("%w: lichess answered %q", ErrLichessFailed, "x"): false,
+		fmt.Errorf("transaction: %w", errors.New("column missing")):  false,
+	} {
+		if got := LichessUserCaused(err); got != want {
+			t.Errorf("LichessUserCaused(%v) = %v, want %v", err, got, want)
+		}
+	}
+	if LichessReason(ErrLichessBadCallback) != "failed" {
+		t.Error("a callback without a code should still show the generic failure")
+	}
+}

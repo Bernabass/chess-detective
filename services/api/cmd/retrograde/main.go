@@ -205,6 +205,9 @@ func cleanup(ctx context.Context, cfg config.Config, stdout io.Writer) error {
 }
 
 func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	if err := checkMigrations(ctx, logger, cfg.DatabaseURL); err != nil {
+		return err
+	}
 	st, err := openStore(ctx, cfg)
 	if err != nil {
 		return err
@@ -271,6 +274,26 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("http server: %w", err)
 	}
 	return nil
+}
+
+// checkMigrations refuses to serve a database that lacks some of this binary's migrations: the
+// first query touching the missing schema would fail much later (DECISIONS 2026-10-29). A
+// database that can't be reached doesn't stop the start-up; /api/health reports it.
+func checkMigrations(ctx context.Context, logger *slog.Logger, databaseURL string) error {
+	pending, err := store.PendingMigrations(ctx, databaseURL)
+	if err != nil {
+		logger.ErrorContext(ctx, "couldn't check the database for pending migrations; starting anyway", "err", err)
+		return nil
+	}
+	switch len(pending) {
+	case 0:
+		return nil
+	case 1:
+		return fmt.Errorf("the database is missing migration %s: run `pnpm db:migrate` (or `retrograde migrate`), then start again", pending[0])
+	default:
+		return fmt.Errorf("the database is missing %d migrations (%s): run `pnpm db:migrate` (or `retrograde migrate`), then start again",
+			len(pending), strings.Join(pending, ", "))
+	}
 }
 
 // warnAboutSettings logs a warning for settings that must not go unnoticed in production.

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -79,7 +80,11 @@ func (s *Server) LichessCallback(ctx context.Context, req LichessCallbackRequest
 	})
 	if err != nil {
 		reason := auth.LichessReason(err)
-		s.logger.InfoContext(ctx, "lichess sign-in failed", "reason", reason, "err", err)
+		level := slog.LevelError // our side: the database, Lichess, a bug
+		if auth.LichessUserCaused(err) {
+			level = slog.LevelInfo
+		}
+		s.logger.Log(ctx, level, "lichess sign-in failed", "reason", reason, "err", err)
 		return redirectCallback("/login?lichess=" + reason), nil
 	}
 	s.adopt(ctx, sess)

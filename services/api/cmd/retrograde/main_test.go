@@ -45,3 +45,15 @@ func TestStartupWarnsAboutScaledRateLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestStartupWithAnUnreachableDatabaseLogsAnErrorAndStarts(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	err := checkMigrations(t.Context(), logger, "postgres://nobody:nothing@127.0.0.1:1/none?sslmode=disable&connect_timeout=2")
+	if err != nil {
+		t.Fatalf("checkMigrations = %v, want nil (/api/health reports the database)", err)
+	}
+	if !strings.Contains(buf.String(), `"level":"ERROR"`) || !strings.Contains(buf.String(), "pending migrations") {
+		t.Errorf("want an error about the skipped check, got %s", buf.String())
+	}
+}

@@ -33,7 +33,17 @@ var (
 	ErrLichessCancelled = errors.New("lichess sign-in was cancelled")
 	ErrLichessState     = errors.New("lichess sign-in state is missing, mismatched, used or expired")
 	ErrLichessFailed    = errors.New("lichess sign-in failed")
+	// ErrLichessBadCallback is a callback with neither a code nor an error: Lichess never sends
+	// one, so it was typed or forged by hand. Shown as "failed", but it's not our fault.
+	ErrLichessBadCallback = fmt.Errorf("%w: callback without a code", ErrLichessFailed)
 )
+
+// LichessUserCaused reports whether a failed sign-in came from the user's side (cancelled,
+// expired, a stale or hand-made link) rather than ours (the database, Lichess, a bug). Ours are
+// logged as errors.
+func LichessUserCaused(err error) bool {
+	return errors.Is(err, ErrLichessCancelled) || errors.Is(err, ErrLichessState) || errors.Is(err, ErrLichessBadCallback)
+}
 
 // LichessReason is the short reason shown on the sign-in page for a failed Lichess sign-in.
 func LichessReason(err error) string {
@@ -126,7 +136,7 @@ func (s *Service) CompleteLichess(ctx context.Context, current *Session, cb Lich
 		return Account{}, Session{}, "", fmt.Errorf("%w: lichess answered %q", ErrLichessFailed, truncate(cb.Error, 40))
 	}
 	if cb.Code == "" {
-		return Account{}, Session{}, "", fmt.Errorf("%w: no code", ErrLichessFailed)
+		return Account{}, Session{}, "", ErrLichessBadCallback
 	}
 
 	who, err := s.lichessAccount(ctx, cb.Code, row.CodeVerifier)
