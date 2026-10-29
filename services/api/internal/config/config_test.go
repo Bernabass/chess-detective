@@ -170,3 +170,20 @@ func mustWrite(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestRateLimitScale(t *testing.T) {
+	cfg, err := Load(mapLookup(map[string]string{"DATABASE_URL": "postgres://x"}))
+	if err != nil || cfg.RateLimitScale != 1 {
+		t.Fatalf("default RateLimitScale = %d (%v), want 1", cfg.RateLimitScale, err)
+	}
+	cfg, err = Load(mapLookup(map[string]string{"DATABASE_URL": "postgres://x", "RATE_LIMIT_SCALE": "1000"}))
+	if err != nil || cfg.RateLimitScale != 1000 {
+		t.Fatalf("RateLimitScale = %d (%v), want 1000", cfg.RateLimitScale, err)
+	}
+	for _, bad := range []string{"0", "-2", "1.5", "lots", "1000001"} {
+		_, err := Load(mapLookup(map[string]string{"DATABASE_URL": "postgres://x", "RATE_LIMIT_SCALE": bad}))
+		if err == nil || !strings.Contains(err.Error(), "RATE_LIMIT_SCALE") {
+			t.Errorf("RATE_LIMIT_SCALE=%q: err = %v", bad, err)
+		}
+	}
+}

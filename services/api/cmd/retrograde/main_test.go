@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/Bernabass/chess-detective/services/api/internal/config"
 )
 
 func TestRunRejectsUnknownCommands(t *testing.T) {
@@ -28,5 +31,17 @@ func TestMigrateWithoutDatabaseURLExplainsTheFix(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "copy .env.example to .env") {
 		t.Errorf("stderr = %q, want a hint about .env", stderr.String())
+	}
+}
+
+func TestStartupWarnsAboutScaledRateLimits(t *testing.T) {
+	for scale, warned := range map[int]bool{1: false, 1000: true} {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&buf, nil))
+		warnAboutSettings(t.Context(), logger, config.Config{RateLimitScale: scale})
+		got := strings.Contains(buf.String(), `"level":"WARN"`) && strings.Contains(buf.String(), "RATE_LIMIT_SCALE")
+		if got != warned {
+			t.Errorf("scale %d: warning logged = %v, want %v (log: %s)", scale, got, warned, buf.String())
+		}
 	}
 }

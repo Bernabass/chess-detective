@@ -33,13 +33,14 @@ type Limits struct {
 
 // DefaultLimits are the production limits: 10/min for auth (per IP and per username), 30/min
 // for guesses and hints per player, 300/hour for starting puzzles per IP (generous: many users
-// share an IP behind carrier NAT or a campus network).
-func DefaultLimits(c clock.Clock) Limits {
+// share an IP behind carrier NAT or a campus network). scale multiplies them all
+// (RATE_LIMIT_SCALE: 1 in production, raised for the e2e tests).
+func DefaultLimits(c clock.Clock, scale int) Limits {
 	return Limits{
-		AuthPerIP:       ratelimit.New(c, 10, time.Minute),
-		AuthPerUsername: ratelimit.New(c, 10, time.Minute),
-		PlayPerPlayer:   ratelimit.New(c, 30, time.Minute),
-		StartPerIP:      ratelimit.New(c, 300, time.Hour),
+		AuthPerIP:       ratelimit.New(c, 10*scale, time.Minute),
+		AuthPerUsername: ratelimit.New(c, 10*scale, time.Minute),
+		PlayPerPlayer:   ratelimit.New(c, 30*scale, time.Minute),
+		StartPerIP:      ratelimit.New(c, 300*scale, time.Hour),
 	}
 }
 

@@ -219,7 +219,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		Auth:           &auth.Service{Store: st, Clock: clk},
 		Daily:          dailySvc,
 		Leaderboard:    &leaderboard.Service{Store: st, Clock: clk, Puzzles: dailySvc},
-		Limits:         httpapi.DefaultLimits(clk),
+		Limits:         httpapi.DefaultLimits(clk, cfg.RateLimitScale),
 		BaseURL:        cfg.BaseURL,
 		CookieSecure:   cfg.CookieSecure,
 		TrustedProxies: cfg.TrustedProxies,
@@ -235,6 +235,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 	}
 
+	warnAboutSettings(ctx, logger, cfg)
 	go runCleanup(ctx, st, clk, logger)
 
 	errCh := make(chan error, 1)
@@ -259,6 +260,14 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return fmt.Errorf("http server: %w", err)
 	}
 	return nil
+}
+
+// warnAboutSettings logs a warning for settings that must not go unnoticed in production.
+func warnAboutSettings(ctx context.Context, logger *slog.Logger, cfg config.Config) {
+	if cfg.RateLimitScale != 1 {
+		logger.WarnContext(ctx, "RATE_LIMIT_SCALE is not 1: every rate limit is multiplied (meant for tests, never production)",
+			"rate_limit_scale", cfg.RateLimitScale)
+	}
 }
 
 // runCleanup runs the cleanup job at startup and then every hour until ctx ends.

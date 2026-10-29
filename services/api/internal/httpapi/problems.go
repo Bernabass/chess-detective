@@ -47,8 +47,9 @@ func (e *tooManyRequests) Error() string {
 // errNoSession is a request that needs a session but has none.
 var errNoSession = errors.New("no session")
 
-// writeError maps a handler's error to a problem response: the one place domain errors become
-// HTTP statuses. Unknown errors are logged and sent as a bare 500 (no internal details).
+// writeError maps a handler's error to a problem response with a sentence fit for the UI: the one
+// place domain errors become HTTP statuses. Unknown errors are logged and sent as a bare 500
+// (no internal details).
 func writeError(logger *slog.Logger, w http.ResponseWriter, r *http.Request, err error) {
 	var invalid *daily.InvalidGuessError
 	var limited *tooManyRequests
@@ -56,15 +57,15 @@ func writeError(logger *slog.Logger, w http.ResponseWriter, r *http.Request, err
 	case errors.Is(err, daily.ErrPuzzleNotFound):
 		writeProblem(w, http.StatusNotFound, "There's no puzzle with that number yet.")
 	case errors.Is(err, daily.ErrNotStarted), errors.Is(err, errNoSession):
-		writeProblem(w, http.StatusConflict, daily.ErrNotStarted.Error())
+		writeProblem(w, http.StatusConflict, "This puzzle hasn't been started. Reload the page (API clients: POST /api/daily/{number}/start first).")
 	case errors.Is(err, daily.ErrFinished):
-		writeProblem(w, http.StatusConflict, daily.ErrFinished.Error())
+		writeProblem(w, http.StatusConflict, "This puzzle is already finished.")
 	case errors.Is(err, daily.ErrNoGuessesLeft):
-		writeProblem(w, http.StatusConflict, daily.ErrNoGuessesLeft.Error())
+		writeProblem(w, http.StatusConflict, "All six guesses are used.")
 	case errors.Is(err, daily.ErrHintsUsedUp):
-		writeProblem(w, http.StatusConflict, daily.ErrHintsUsedUp.Error())
+		writeProblem(w, http.StatusConflict, "All three hints are used.")
 	case errors.Is(err, daily.ErrTooManyMoves):
-		writeProblem(w, http.StatusBadRequest, daily.ErrTooManyMoves.Error())
+		writeProblem(w, http.StatusBadRequest, fmt.Sprintf("A guess has at most %d moves.", daily.MaxMoves))
 	case errors.As(err, &invalid):
 		p := problem{Type: "about:blank", Title: "Invalid guess", Status: http.StatusUnprocessableEntity, Detail: invalid.Reason}
 		if invalid.Ply > 0 {
@@ -73,9 +74,9 @@ func writeError(logger *slog.Logger, w http.ResponseWriter, r *http.Request, err
 		}
 		writeProblemBody(w, p)
 	case errors.Is(err, auth.ErrUsernameTaken):
-		writeProblem(w, http.StatusConflict, auth.ErrUsernameTaken.Error())
+		writeProblem(w, http.StatusConflict, "That username is taken. Pick another one.")
 	case errors.Is(err, auth.ErrBadCredentials):
-		writeProblem(w, http.StatusUnauthorized, auth.ErrBadCredentials.Error())
+		writeProblem(w, http.StatusUnauthorized, "Wrong username or password.")
 	case errors.Is(err, leaderboard.ErrUserNotFound):
 		writeProblem(w, http.StatusNotFound, "There's no player with that name.")
 	case errors.As(err, &limited):
