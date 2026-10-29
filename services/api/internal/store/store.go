@@ -3,6 +3,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -77,25 +78,11 @@ func (s *Store) Ping(ctx context.Context) error {
 
 // Migrate applies every pending migration embedded in the binary.
 func Migrate(ctx context.Context, databaseURL string, logger *slog.Logger) error {
-	connCfg, err := pgx.ParseConfig(databaseURL)
+	provider, sqlDB, err := migrationProvider(databaseURL)
 	if err != nil {
-		return fmt.Errorf("parsing DATABASE_URL: %w", err)
+		return err
 	}
-	if connCfg.ConnectTimeout == 0 {
-		// Don't hang forever on a host that silently drops packets.
-		connCfg.ConnectTimeout = 10 * time.Second
-	}
-	sqlDB := stdlib.OpenDB(*connCfg)
 	defer func() { _ = sqlDB.Close() }()
-
-	migrations, err := fs.Sub(db.Migrations, "migrations")
-	if err != nil {
-		return fmt.Errorf("loading embedded migrations: %w", err)
-	}
-	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations)
-	if err != nil {
-		return fmt.Errorf("creating migration provider: %w", err)
-	}
 	results, err := provider.Up(ctx)
 	if err != nil {
 		return fmt.Errorf("applying migrations: %w", err)
@@ -110,4 +97,62 @@ func Migrate(ctx context.Context, databaseURL string, logger *slog.Logger) error
 	}
 	logger.InfoContext(ctx, "database is up to date", "applied", len(results), "version", version)
 	return nil
+}
+
+// PendingMigrations lists the embedded migrations the database hasn't applied yet, oldest first
+// ("00003_lichess_username.sql"). It changes nothing; serve refuses to start while any are pending.
+func PendingMigrations(ctx context.Context, databaseURL string) ([]string, error) {
+	provider, sqlDB, err := migrationProvider(databaseURL)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = sqlDB.Close() }()
+	// A database never migrated has no goose table yet (looked up the way goose does), and then
+	// everything is pending.
+	var tracked bool
+	if err := sqlDB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_tables
+		WHERE schemaname = current_schema() AND tablename = 'goose_db_version')`).Scan(&tracked); err != nil {
+		return nil, fmt.Errorf("checking for the migrations table: %w", err)
+	}
+	var pending []string
+	if !tracked {
+		for _, src := range provider.ListSources() {
+			pending = append(pending, src.Path)
+		}
+		return pending, nil
+	}
+	statuses, err := provider.Status(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reading migration status: %w", err)
+	}
+	for _, st := range statuses {
+		if st.State == goose.StatePending {
+			pending = append(pending, st.Source.Path)
+		}
+	}
+	return pending, nil
+}
+
+// migrationProvider connects to databaseURL with goose over the embedded migrations. The caller
+// closes the *sql.DB.
+func migrationProvider(databaseURL string) (*goose.Provider, *sql.DB, error) {
+	connCfg, err := pgx.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parsing DATABASE_URL: %w", err)
+	}
+	if connCfg.ConnectTimeout == 0 {
+		// Don't hang forever on a host that silently drops packets.
+		connCfg.ConnectTimeout = 10 * time.Second
+	}
+	migrations, err := fs.Sub(db.Migrations, "migrations")
+	if err != nil {
+		return nil, nil, fmt.Errorf("loading embedded migrations: %w", err)
+	}
+	sqlDB := stdlib.OpenDB(*connCfg)
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations)
+	if err != nil {
+		_ = sqlDB.Close()
+		return nil, nil, fmt.Errorf("creating migration provider: %w", err)
+	}
+	return provider, sqlDB, nil
 }

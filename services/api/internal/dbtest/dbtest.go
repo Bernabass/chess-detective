@@ -44,6 +44,28 @@ func URL(t testing.TB) string {
 func Store(t testing.TB) (*store.Store, *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
+	schemaURL := SchemaURL(t)
+	if err := store.Migrate(ctx, schemaURL, slog.New(slog.DiscardHandler)); err != nil {
+		t.Fatalf("migrating test schema: %v", err)
+	}
+	st, err := store.Open(ctx, schemaURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	pool, err := pgxpool.New(ctx, schemaURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	return st, pool
+}
+
+// SchemaURL returns TEST_DATABASE_URL pointed at a fresh, empty schema (not migrated), dropped
+// when the test ends.
+func SchemaURL(t testing.TB) string {
+	t.Helper()
+	ctx := context.Background()
 	base := URL(t)
 
 	buf := make([]byte, 6)
@@ -83,20 +105,5 @@ func Store(t testing.TB) (*store.Store, *pgxpool.Pool) {
 	q := u.Query()
 	q.Set("search_path", schema+",public") // pgx passes unknown parameters to the server
 	u.RawQuery = q.Encode()
-	schemaURL := u.String()
-
-	if err := store.Migrate(ctx, schemaURL, slog.New(slog.DiscardHandler)); err != nil {
-		t.Fatalf("migrating test schema: %v", err)
-	}
-	st, err := store.Open(ctx, schemaURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(st.Close)
-	pool, err := pgxpool.New(ctx, schemaURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	return st, pool
+	return u.String()
 }

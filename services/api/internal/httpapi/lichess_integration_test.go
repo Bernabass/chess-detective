@@ -4,6 +4,7 @@ package httpapi_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -425,5 +426,83 @@ func TestMalformedLichessCallbackGoesToTheSignInPage(t *testing.T) {
 	api := newAPI(t, nil)
 	if got := api.client().callback(api.srv.URL + "/api/auth/lichess/callback?state=a&state=b"); got != "/login?lichess=failed" {
 		t.Fatalf("sent to %q", got)
+	}
+}
+
+// failureLevel runs one sign-in attempt and returns the level of its "lichess sign-in failed" line.
+func (a *testAPI) failureLevel(attempt func()) string {
+	a.t.Helper()
+	before := len(a.logs.String())
+	attempt()
+	for _, line := range strings.Split(a.logs.String()[before:], "\n") {
+		var entry struct{ Level, Msg string }
+		if json.Unmarshal([]byte(line), &entry) == nil && entry.Msg == "lichess sign-in failed" {
+			return entry.Level
+		}
+	}
+	a.t.Fatal("no failed sign-in was logged")
+	return ""
+}
+
+// Failures on our side (the database, Lichess) are errors; the user's own (cancelled, expired,
+// a stale or hand-made link) are only information.
+func TestLichessFailureLogLevels(t *testing.T) {
+	t.Parallel()
+	api := newAPI(t, nil)
+	api.setLichessUser("thibault", "Thibault")
+	expect := func(name, want string, attempt func()) {
+		t.Helper()
+		if got := api.failureLevel(attempt); got != want {
+			t.Errorf("%s: logged at %s, want %s", name, got, want)
+		}
+	}
+	callback := func(c *client, query string) string {
+		authorize, _ := url.Parse(c.startLichess("/daily"))
+		return c.callback(api.srv.URL + "/api/auth/lichess/callback?state=" + authorize.Query().Get("state") + query)
+	}
+
+	expect("cancelled", "INFO", func() {
+		api.lichess.set(func(f *fakeLichess) { f.deny = true })
+		api.client().lichessSignIn("/daily")
+		api.lichess.set(func(f *fakeLichess) { f.deny = false })
+	})
+	expect("another browser's link", "INFO", func() {
+		attacker := api.client()
+		link := attacker.approve(attacker.startLichess("/daily"))
+		api.client().callback(link)
+	})
+	expect("expired", "INFO", func() {
+		c := api.client()
+		cb := c.approve(c.startLichess("/daily"))
+		api.clock.Advance(10*time.Minute + time.Second)
+		c.callback(cb)
+	})
+	expect("no code", "INFO", func() {
+		if got := callback(api.client(), ""); got != "/login?lichess=failed" {
+			t.Errorf("no code: sent to %q", got)
+		}
+	})
+	expect("lichess answered an error", "ERROR", func() { callback(api.client(), "&error=server_error") })
+	expect("token error", "ERROR", func() {
+		api.lichess.set(func(f *fakeLichess) { f.tokenError = "invalid_grant" })
+		api.client().lichessSignIn("/daily")
+		api.lichess.set(func(f *fakeLichess) { f.tokenError = "" })
+	})
+	expect("account error", "ERROR", func() {
+		api.lichess.set(func(f *fakeLichess) { f.accountError = true })
+		api.client().lichessSignIn("/daily")
+		api.lichess.set(func(f *fakeLichess) { f.accountError = false })
+	})
+	// What the manual test found: a database without migration 00003.
+	if _, err := api.db.Exec(context.Background(), "ALTER TABLE users DROP COLUMN lichess_username"); err != nil {
+		t.Fatal(err)
+	}
+	expect("database error", "ERROR", func() {
+		if got := api.client().lichessSignIn("/daily"); got != "/login?lichess=failed" {
+			t.Errorf("database error: sent to %q", got)
+		}
+	})
+	if live, _, _ := api.lichess.state(); live != 0 {
+		t.Errorf("%d Lichess tokens left unrevoked", live)
 	}
 }
