@@ -22,23 +22,27 @@ export const routes: RouteObject[] = [
       },
       {
         path: 'daily',
-        lazy: async () => ({ Component: (await import('./routes/Daily')).DailyPage }),
+        lazy: async () => ({
+          Component: (await import('./features/daily/DailyPage')).DailyPage,
+        }),
       },
       {
         path: 'daily/:number',
-        lazy: async () => ({ Component: (await import('./routes/Daily')).DailyPage }),
+        lazy: async () => ({
+          Component: (await import('./features/daily/DailyPage')).DailyPage,
+        }),
       },
       {
         path: 'archive',
-        lazy: async () => ({ Component: (await import('./routes/Placeholders')).ArchivePage }),
+        lazy: async () => ({ Component: (await import('./routes/Archive')).ArchivePage }),
       },
       {
         path: 'leaderboard',
-        lazy: async () => ({ Component: (await import('./routes/Placeholders')).LeaderboardPage }),
+        lazy: async () => ({ Component: (await import('./routes/Leaderboard')).LeaderboardPage }),
       },
       {
         path: 'u/:username',
-        lazy: async () => ({ Component: (await import('./routes/Placeholders')).ProfilePage }),
+        lazy: async () => ({ Component: (await import('./routes/Profile')).ProfilePage }),
       },
       {
         path: 'login',

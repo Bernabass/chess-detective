@@ -1,6 +1,9 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterEach } from 'vitest';
+
+// Lazily loaded routes can take over a second to appear when the whole suite runs at once.
+configure({ asyncUtilTimeout: 5000 });
 
 // Some test files run in Node (no DOM): only the jsdom ones need cleaning up and stubs.
 const hasDom = typeof window !== 'undefined';
@@ -20,4 +23,23 @@ if (hasDom && typeof window.matchMedia !== 'function') {
       removeEventListener: () => undefined,
       dispatchEvent: () => false,
     }) as unknown as MediaQueryList;
+}
+
+// jsdom lacks <dialog>'s modal methods and scrollIntoView; browsers all have them.
+if (hasDom) {
+  const dialog = window.HTMLDialogElement.prototype;
+  if (typeof dialog.showModal !== 'function') {
+    dialog.showModal = function showModal(this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    };
+  }
+  if (typeof dialog.close !== 'function') {
+    dialog.close = function close(this: HTMLDialogElement) {
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    };
+  }
+  if (typeof window.HTMLElement.prototype.scrollIntoView !== 'function') {
+    window.HTMLElement.prototype.scrollIntoView = () => undefined;
+  }
 }
