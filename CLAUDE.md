@@ -28,7 +28,7 @@ Chess detective puzzles built on **retrograde analysis**: players reason *backwa
 - `pnpm check`: lint + typecheck + fast tests for every TS package, plus `go vet`, golangci-lint and Go unit tests. Must pass before every commit.
 - `pnpm --filter @retrograde/engine test` / `test:slow`: engine fast / slow suites (same for `@retrograde/generator`; both slow suites run nightly in CI)
 - `pnpm test:api`: Go unit + integration tests (needs Postgres running)
-- `pnpm test:e2e`: Playwright end-to-end tests against the production web build (first install the browser once: `pnpm --filter @retrograde/web exec playwright install chromium`); `pnpm --filter @retrograde/web shots` takes the review screenshots into `apps/web/screenshots/`
+- `pnpm test:e2e`: Playwright end-to-end tests against the production web build and a real API on fixture puzzles (needs PostgreSQL and `TEST_DATABASE_URL`, like `pnpm test:api`; first install the browser once: `pnpm --filter @retrograde/web exec playwright install chromium`); `pnpm --filter @retrograde/web shots` takes the review screenshots into `apps/web/screenshots/`
 - `pnpm gen`: regenerate sqlc code, Go server stubs and TS API types from `api/openapi.yaml`
 - `pnpm db:migrate`: apply database migrations; `pnpm seed`: migrate, set `LAUNCH_DATE` in `.env` if missing, load `data/puzzles-v1.jsonl` and schedule dailies through 30 days ahead (idempotent)
 - `pnpm try:api`: build and start a private API on port 8091 and walk through the daily flow (guest, wrong guess, hint, solve, register, leaderboards), printing each response. Needs `pnpm seed` first

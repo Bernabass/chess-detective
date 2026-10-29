@@ -558,7 +558,7 @@ Retrograde #142 ★★★ · 4.5 moves
 https://<BASE_URL>/daily
 ```
 
-A failed attempt shows `X/6`. With no hints, omit the `🔍n` part.
+A failed attempt shows `X/6`. With no hints, omit the `🔍n` part. An archive (practice) attempt's card says `Retrograde #142 (practice)` and links to `https://<BASE_URL>/daily/142` (decided 2026-10-29).
 
 ### 8.7 Scheduling and archive
 
@@ -624,6 +624,7 @@ The engine worker is exposed with Comlink: `analyze(fen)`, `lastMoves(fen, depth
 | `LICHESS_CLIENT_ID` | `retrograde` | Lichess PKCE needs no registration; any stable id works (verify in Lichess docs) |
 | `LOG_LEVEL` | `info` | |
 | `TRUSTED_PROXIES` | `10.0.0.0/8,127.0.0.1` | Comma-separated IPs/CIDRs. `X-Forwarded-For` is honoured only when the direct peer is in this list; otherwise the client IP is the TCP peer address. Empty (the default) trusts no proxy. Used for per-IP rate limits and logs. |
+| `RATE_LIMIT_SCALE` | `1` (default) | Multiplies every rate limit. Only the e2e tests raise it; the API logs a warning at startup whenever it isn't 1. (Decided 2026-10-29.) |
 
 ### 10.3 Data model (sketch; finalize in Phase 6)
 

@@ -13,7 +13,7 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 | 4 | Puzzle generator | done (2026-10-23) | `phase-4` |
 | 5 | Web shell and Lab | done (2026-10-23) | `phase-5` |
 | 6 | API core | done (2026-10-23) | `phase-6` |
-| 7 | Daily UI, leaderboards, profiles, archive | not started | |
+| 7 | Daily UI, leaderboards, profiles, archive | done (2026-10-29) | `phase-7` |
 | 8 | Sign in with Lichess | not started | |
 | 9 | Polish and ship | not started | |
 
@@ -24,10 +24,131 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 | Perft nodes/second (Node, start position depth 5) | ≈4.0M nodes/s (median of 3 runs: 3.4M, 4.0M, 4.2M); Kiwipete depth 4: 5.4M. Node 24.13, owner's Windows 10 machine, `pnpm --filter @retrograde/engine perft 5` | 2026-10-22 |
 | Solver median / p95 at N = 6, 8, 10 | find-one: 2 / 6 ms, 2 / 11 ms, 4 / 191 ms. count (cap 2): 2 / 5 ms, 2 / 33 ms, 2 / 167 ms (worst 436 ms). Median nodes 7–14. 50 targets of uniformly random games per N, `pnpm --filter @retrograde/engine bench` | 2026-10-22 |
 | Generator acceptance rate and time per candidate by N | Beam (W = 180, 200,000-node limit, `--jobs 4`), accepted / candidates and mean ms per candidate per job: N = 6: 68% / 20 ms, 7: 79% / 123 ms, 8: 58% / 282 ms, 9: 59% / 1.2 s, 10: 35% / 2.6 s, 11: 28% / 3.9 s, 12: 14% / 4.1 s. Whole 500-puzzle pool: 72 min; `verify` of the pool: 227 s. Heavy 8-ply uniqueness count (118,811 nodes): 2,328 ms with engine 0.3.0 → 1,250 ms with the incremental bound | 2026-10-23 |
-| Main-thread JS bundle (gzipped) | Main `index` 116.65 KB; `/lab` loads about 144 KB of JS in total (plus 10.6 KB CSS); engine worker separate, 16.5 KB gzip. `pnpm --filter @retrograde/web build` | 2026-10-23 |
+| Main-thread JS bundle (gzipped) | Main `index` 118.96 KB; `/daily` adds DailyPage 8.29 KB plus the shared board chunk (16.96 KB); `/lab` about 144 KB of JS in total; CSS 11.90 KB; engine worker separate, 16.5 KB gzip. `pnpm --filter @retrograde/web build` | 2026-10-29 |
 | Lighthouse accessibility, /daily and /lab | | |
 
 ## Phase log
+
+### Phase 7: Daily UI, leaderboards, profiles, archive (2026-10-29)
+
+**Before the phase:** your Phase 6 check is done. A skipped day already ended the streak everywhere; `TestSkippedDayEndsTheStreak` now proves it for `/auth/me`, profiles and the all-time board, up to the midnight boundary (commit `8873703`).
+
+**Done, by acceptance criterion**
+- **Daily play end to end** (`/daily`, `/daily/:number`):
+  - board input with only legal moves, a promotion picker, and typed SAN or UCI as the keyboard alternative;
+  - ply counter, SAN move list, Undo and Reset;
+  - difference overlay;
+  - Submit enabled only at exactly N plies, and only once the attempt has started;
+  - feedback rows with colour, icon (✓ ↔ ✕) and words per ply, plus an `aria-live` announcement;
+  - the three hints;
+  - won and lost screens with solution playback (`ProofPlayer`).
+  - Tests: `DailyPage.test.tsx` (11 tests) and `moves.test.ts`; e2e `daily.spec.ts` (a guest solves the seeded daily with a drag and typed moves; six wrong guesses on an archive puzzle; the promotion picker; keyboard-only play; an unreleased puzzle).
+- **Share card exactly per §8.6:** `share.test.ts` checks the spec's example string exactly, `X/6`, no 🔍 without hints, and the practice variant. The e2e test reads the real clipboard after Copy.
+- **Register/login pages; header shows guest vs user; guest progress survives signing up.**
+  - Real forms, with server errors (taken name, wrong password, 429 with the wait).
+  - `?next=` accepts paths on this site only.
+  - The header shows the username and Sign out; on phones, a user icon plus the menu.
+  - Tests: `pages.test.tsx`; e2e `accounts.spec.ts` › "a guest who solves and then registers keeps the result, and the leaderboard shows them".
+- **Leaderboards, profile with guess distribution, archive list and archive play.**
+  - Daily board (any puzzle, you marked "You", your rank shown even outside the top 100) and all-time boards (current streak, best streak, solved).
+  - Profile with stat tiles and a guess-distribution chart (single hue, validated with the dataviz checks, plus a table for screen readers).
+  - Archive with your results, pages of 30, and "Today".
+  - Tests: `pages.test.tsx`; e2e `boards.spec.ts`.
+- **Playwright journeys from the spec:** guest solves the seeded daily (`daily.spec.ts`); a user registers, keeps the result and the leaderboard shows them (`accounts.spec.ts`).
+- **Your additions:**
+  1. **How to play:** opens on the first visit, reopens from a button, and is a native `<dialog>` (focus trap, Escape). The example is 1.e4 e5 2.Ke2 Ke7 with the guess 1.Nf3 e5 2.e4 Ke7 shown as ✕ ✓ ↔ ✓. `howto.test.ts` proves with the solver that it's a unique shortest proof game, and checks its feedback with the reference implementation, now in the engine as `dailyFeedback`.
+  2. **Countdown** to the next UTC midnight, shown in local time ("Next puzzle in 4:12:09 (at 03:00 your time)"). It counts from the finished puzzle's own day, so a puzzle finished after midnight says at once that the next one is out. Tests: `nextPuzzle.test.ts` (Tokyo, New York, year end) and `DailyPage.test.tsx`.
+  3. **Screenshot review** (below).
+  - Also from your approval: `RATE_LIMIT_SCALE` logs a warning at startup when it isn't 1 (`TestStartupWarnsAboutScaledRateLimits`), and leaderboard times show h:mm:ss past an hour (`format.test.ts`, `pages.test.tsx`).
+
+**How e2e works now:** Playwright starts `scripts/e2e-api.mjs`. It resets an `e2e` schema in your test database (refusing any database not named `*_test`), loads 10 fixture puzzles so today is #4, and serves the API on port 8092 for `vite preview`. So `pnpm test:e2e` needs PostgreSQL running, like `pnpm test:api`.
+
+**Visual review** (`pnpm --filter @retrograde/web shots`: 21 states × 360 and 1280 px × light and dark = 84 images, all looked at)
+- **Round 1 found 13 problems:**
+  - the game's columns were centred, out of line with the title;
+  - the difference overlay was hard to see in dark mode;
+  - "…" split from its move in guess rows;
+  - "9 plies" broke across lines;
+  - the move field's placeholder was cut off at 360 px;
+  - "what happened.." had two full stops;
+  - leaderboard rows didn't reach the card edges (padding override lost);
+  - the archive didn't mark today;
+  - the metric buttons wrapped 2 + 1 at 360 px;
+  - signed-in players saw no sign of it in the phone header;
+  - the screenshot run couldn't show the "Copied" state (no clipboard permission) or sign in at 360 px.
+- **Round 2 found 1:** the share preview's first line was cut off at 360 px (it now wraps).
+- **Round 3:** nothing left to fix.
+- Also found by the 360 px checks: the leaderboard and a 20-character username widened the page. Now covered by `routes.spec.ts`.
+- Final images: `docs/screenshots/daily-*.png`, `leaderboard-1280-light.png`, `profile-360-dark.png`, `archive-1280-dark.png`.
+
+**Evidence**
+- `pnpm check`: green in 77–89 s.
+  - Engine 269 + 34, generator 37, web 88; golangci-lint `0 issues`; Go tests ok; hook test passed.
+  - The web suite moved to Vitest's `vmThreads` pool, 31 s → 14 s; without that, `pnpm check` was 146 s.
+- `pnpm test:api`: all 9 Go packages ok, including the new `cmd/e2e-setup`.
+- `pnpm test:e2e`: 63 passed (2.1 min).
+- Bundle (`vite build`):
+  - main `index` 118.96 KB gzip (+2.3 KB);
+  - DailyPage 8.29 KB, Leaderboard 2.20 KB, Profile 1.47 KB, Archive 1.46 KB, Auth 1.32 KB gzip;
+  - the board chunk is shared with the Lab.
+- **Self-review** (separate review agent, read-only; reran `pnpm check` and `pnpm test:api`). Fixed, from its findings:
+  1. The countdown counted from the clock, not the puzzle's day: a daily finished after midnight showed a full day to wait. Fixed, with tests.
+  2. If re-reading the puzzle failed after a guess or hint was recorded, the page said it failed, so a retry could spend another guess or hint. Fixed; a test fails without the fix.
+  3. Playwright could reuse a stale preview server (or one proxying to the dev database). It never reuses one now.
+  4. A failed start (network, 429) couldn't be retried without reloading. There's a Try again button, with a test.
+  5. Focus:
+     - the promotion picker keeps Tab inside, Escape works anywhere, and focus returns to the move field;
+     - when the last guess ends the game, focus moves to the result heading (test).
+  6. The difficulty stars' `aria-label` needed `role="img"` to be read.
+  7. `e2e-setup` checked the URL's database name, but pgx also honours `?dbname=`. It now checks `current_database()`, with an integration test.
+  8. e2e tests hardcoded today as #4. They now read it from the API, so a run that crosses midnight UTC passes.
+  - Also:
+    - no guest-prompt flash for signed-in players;
+    - the puzzle isn't refetched on window focus (it would swap the board for the new day's);
+    - typed `0-0` and `e8=q` are pinned by tests.
+- Also fixed during the phase:
+  - a race where a fast Submit could precede the start (found by e2e; test fails without the fix);
+  - 4xx responses are no longer retried by the query client, so "not released" shows at once;
+  - the play board fits a 720 px-tall screen;
+  - API problem `detail`s are now UI sentences.
+
+**Known issues / follow-ups**
+- Sign in with Lichess stays disabled ("coming soon") until Phase 8.
+- Lighthouse scores are for Phase 9; axe scans cover daily (How to play, in progress, won), leaderboard, all-time, profile, archive, login and register in both themes.
+- The share link uses the page's origin; in production that's `BASE_URL`.
+
+**How to try it** (VS Code terminal, PowerShell, in the project folder; PostgreSQL running)
+
+1. If you haven't since Phase 6, load the puzzles: `pnpm seed`.
+2. Start everything:
+   ```powershell
+   pnpm dev
+   ```
+   Open http://localhost:5173/daily.
+3. **First visit:** How to play opens. Read the example (✕ ✓ ↔ ✓) and press **Start playing**.
+4. **Play a guess:**
+   - drag pieces, or type moves in the field (e4, Nf3, O-O);
+   - tick **Show differences from the target** to see which squares still differ;
+   - when the counter reads N / N, press **Submit guess**.
+
+   A row of squares appears, each with ✓, ↔ or ✕. Tap the row to load that guess back onto the board.
+5. Take a hint, then keep going until you solve it, or use all six guesses. You'll see:
+   - Case closed or unsolved, with the solution to step through;
+   - your share card (**Copy result**);
+   - "Next puzzle in h:mm:ss (at HH:MM your time)".
+6. As a guest, press **Create an account** on the result. After registering you're back on the daily with the same result, your name in the header, and a 1-day streak.
+7. Look around:
+   - **Leaderboard**: you're marked "You";
+   - **All time**;
+   - your profile (click your name): guess distribution;
+   - **Archive**: play an earlier day as practice.
+8. Tests:
+   ```powershell
+   pnpm check
+   pnpm test:api
+   pnpm test:e2e                                   # needs PostgreSQL; about 2 minutes
+   pnpm --filter @retrograde/web shots             # optional: 84 screenshots into apps/web/screenshots/
+   ```
 
 ### Phase 6: API core (2026-10-23)
 
@@ -101,7 +222,7 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
   - Timestamps came back in this machine's time zone (`+03:00`). The store now scans `timestamptz` as UTC.
   - The 422 `ply` is 1-based, like the hint plies.
 
-**Decisions to confirm** (in DECISIONS 2026-10-23)
+**Decisions to confirm** (in DECISIONS 2026-10-23; both confirmed by the owner on 2026-10-29)
 - Archive (practice) attempts count in **no** stats: not in played, solved or the distribution either, not just streaks and leaderboards as SPEC §1 / §8.7 say.
 - A failed daily ends the current streak immediately (Wordle-style).
 

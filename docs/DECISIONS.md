@@ -298,11 +298,11 @@ Append-only. Each entry: date, context, decision, consequences. Newest at the bo
   - A malformed move (not `^[a-h][1-8][a-h][1-8][qrbn]?$`) is a 422 with its `ply`, like an illegal one, not a 400. The contract only caps each move at 5 characters, so the player is told which move is wrong.
   - Every `ply` in the API is 1-based: the 422's `ply`, hint 2's `plies` and hint 3's `ply`.
   - A rejected guess (wrong length, illegal or malformed move, over 40 moves) doesn't use one of the six guesses.
-- **Archive attempts count in no stats** (a deviation that extends SPEC §1 and §8.7, which only exclude them from streaks and leaderboards):
+- **Archive attempts count in no stats** (a deviation that extends SPEC §1 and §8.7, which only exclude them from streaks and leaderboards; confirmed by the owner 2026-10-29):
   - An attempt started after its puzzle's day is practice. It is also left out of played, solved, win rate, the guess distribution and average hints, so the stats describe daily play only and can't be padded by replaying the archive.
   - The flag is fixed when the attempt starts, so an attempt started at 23:59 and finished after midnight still counts for its puzzle's day.
 - **Streaks:**
-  - A failed daily after the last solve ends the current streak at once (Wordle-style; SPEC §8.5 "consecutive days with a solved daily"). The max streak is kept.
+  - A failed daily after the last solve ends the current streak at once (Wordle-style; SPEC §8.5 "consecutive days with a solved daily"; confirmed by the owner 2026-10-29). The max streak is kept.
   - Otherwise the stored streak is as of the last solve, and it's applied at read time: `/auth/me`, profiles and the all-time leaderboard show it only while the last solve was today or yesterday (today's puzzle may still be ahead).
 - **CSRF origin:** `BASE_URL` is normalized the way browsers write `Origin`: lower case, no default port. So `https://example.com:443` still accepts the browser's `Origin: https://example.com`.
 - **Timestamps in UTC:** the store scans `timestamptz` as UTC, so API timestamps don't depend on the server's time zone.
@@ -313,3 +313,22 @@ Append-only. Each entry: date, context, decision, consequences. Newest at the bo
   - `gorilla/mux`, `google/uuid`, `go-openapi/jsonpointer`, `santhosh-tekuri/jsonschema`, `oasdiff/yaml`, `oasdiff/yaml3`, `apapsch/go-jsonmerge`, `rogpeppe/go-internal`;
   - `golang.org/x/sys`.
 - Consequences: crawlers and bots that only `GET` the daily create no rows at all. The web app must call `/start` before the first guess or hint (Phase 7).
+
+## 2026-10-29: Phase 7 web decisions
+- Context: Phase 7 plan, approved by the owner with three changes (a unique How to play example, a startup warning for `RATE_LIMIT_SCALE`, h:mm:ss leaderboard times). The owner also confirmed both Phase 6 deviations: archive attempts count in no stats, and a failed daily ends the current streak at once.
+- **Archive share card:** SPEC §8.6 only defines the daily card. For an archive puzzle the card adds "(practice)" after the number and links to `/daily/N` instead of `/daily`.
+- **Tapping a guess row** loads that guess onto the board for editing (Undo back to the first wrong ply), not as a read-only replay.
+- **A guess already submitted can't be submitted again** ("you already tried this game"). This is a UI guard; the server still accepts any legal guess.
+- **Submit waits for the attempt:** the page starts the attempt when it shows the puzzle (`POST /start`); until that has answered, Submit stays disabled, so a fast player can't send a guess the server would reject with 409.
+- **`RATE_LIMIT_SCALE`** (default 1, at most 1,000,000) multiplies every rate limit. Only the e2e tests raise it (to 1000: they register many accounts a minute from one IP). The API logs a warning at startup whenever it isn't 1.
+- **e2e against a real API:** Playwright starts `scripts/e2e-api.mjs`, which runs the dev-only `services/api/cmd/e2e-setup` (drops and recreates an `e2e` schema in the test database, refusing any database whose name doesn't end in `_test`), imports 10 fixture puzzles (`apps/web/e2e/fixtures/puzzles.jsonl`, copied from the v1 pool: 2 per difficulty, ★★★ and up at least 9 plies so a promotion is reachable), schedules them so today is #4, and serves the API on port 8092. `vite preview` proxies `/api` to it. So `pnpm test:e2e` now needs PostgreSQL and `TEST_DATABASE_URL`, like `pnpm test:api`.
+- **`dailyFeedback` is in the engine's public API:** the reference feedback implementation moved from the fixtures script to `packages/engine/src/daily/feedback.ts`, so the web app's How to play test can check its example with it. The fixtures it generates are byte-identical, and the engine version stays 0.4.0 (no move rule changed).
+- **How to play example:** 1.e4 e5 2.Ke2 Ke7, with the guess 1.Nf3 e5 2.e4 Ke7 (✕ ✓ ↔ ✓). A test checks with the solver that it is a unique shortest proof game, and its feedback with `dailyFeedback`.
+- **Problem details are UI text:** the API's error `detail`s are full sentences ("That username is taken. Pick another one."), mapped in `writeError`; Go's error strings stay Go-style.
+- **Queries don't retry client errors:** the app's query client retries network errors and 5xx twice, but never a 4xx (a 404 puzzle shows "not released yet" at once).
+- **The play board fits the screen height** (`min(100%, 100dvh - 9rem)`), so a 720 px laptop shows the whole board and its controls.
+- **Guess distribution chart:** one series in one hue (the "right move" green, which passes the dataviz palette checks against both card surfaces), values in ink at the bar ends, and the same numbers as a table for screen readers.
+- **Web unit tests run in Vitest's `vmThreads` pool:** creating a jsdom per test file took over half of the web suite's time. One jsdom per worker, with each file still in its own VM context (so `vi.mock`s don't leak), cut the suite from 31 s to 14 s and keeps `pnpm check` under 90 s.
+- **The countdown counts from the finished puzzle's day**, not the clock's: the next puzzle is out at the UTC midnight after that day, so a daily finished after midnight (or reopened later) says at once that the next one is ready.
+- **Focus after the last guess** moves to the result heading (Submit has gone); the promotion picker keeps Tab inside and gives focus back to the move field.
+- No new dependencies.
