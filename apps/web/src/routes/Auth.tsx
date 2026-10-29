@@ -1,5 +1,6 @@
 import { useId, useState, type InputHTMLAttributes, type SyntheticEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
+import { Icon } from '../components/Icon';
 import { Button, Card, PageTitle } from '../components/ui';
 import { safeNext } from '../lib/next';
 import { errorMessage } from '../lib/problem';
@@ -35,6 +36,14 @@ function Field({
   );
 }
 
+/** Why a Lichess sign-in came back to this page (/login?lichess=<reason>, set by the API). */
+const LICHESS_REASONS: Record<string, string> = {
+  cancelled: 'Lichess sign-in was cancelled.',
+  expired: 'That Lichess sign-in expired, or was started in another browser. Please try again.',
+  failed: "Couldn't sign in with Lichess. Please try again.",
+  busy: 'Too many sign-in attempts from your network. Wait a minute and try again.',
+};
+
 /** Sign in and create an account. Afterwards, back to where the player came from (?next=). */
 function AuthForm({ mode }: { mode: 'login' | 'register' }) {
   const login = mode === 'login';
@@ -48,6 +57,13 @@ function AuthForm({ mode }: { mode: 'login' | 'register' }) {
   const signIn = useLogin();
   const register = useRegister();
   const mutation = login ? signIn : register;
+  // Own keys only: "?lichess=__proto__" must not reach the object's prototype.
+  const reasonKey = params.get('lichess') ?? '';
+  const lichessReason = Object.hasOwn(LICHESS_REASONS, reasonKey)
+    ? LICHESS_REASONS[reasonKey]
+    : undefined;
+  // A full navigation (not fetch): the API redirects the browser to Lichess and back.
+  const lichessStart = `/api/auth/lichess/start?return_to=${encodeURIComponent(next)}`;
 
   const submit = (e: SyntheticEvent): void => {
     e.preventDefault();
@@ -71,6 +87,11 @@ function AuthForm({ mode }: { mode: 'login' | 'register' }) {
         {title}
       </PageTitle>
       <Card>
+        {lichessReason !== undefined && (
+          <p role="alert" className="mb-4 rounded-md border border-bad px-3 py-2 text-sm text-bad">
+            {lichessReason}
+          </p>
+        )}
         <form className="space-y-4" aria-label={title} onSubmit={submit}>
           <Field
             label="Username"
@@ -111,13 +132,22 @@ function AuthForm({ mode }: { mode: 'login' | 'register' }) {
           <Button type="submit" variant="primary" className="w-full" disabled={mutation.isPending}>
             {login ? 'Sign in' : 'Create account'}
           </Button>
-          <Button className="w-full" disabled aria-describedby="lichess-soon">
-            Sign in with Lichess
-          </Button>
-          <p id="lichess-soon" className="-mt-2 text-center text-xs text-ink-soft">
-            Sign in with Lichess is coming soon.
-          </p>
         </form>
+        <div className="my-4 flex items-center gap-3 text-xs text-ink-soft" aria-hidden="true">
+          <span className="h-px flex-1 bg-rule" />
+          or
+          <span className="h-px flex-1 bg-rule" />
+        </div>
+        <a
+          href={lichessStart}
+          className="flex w-full items-center justify-center gap-2 rounded-md border border-card-edge bg-card px-3 py-2 text-sm font-medium text-ink no-underline transition hover:bg-paper"
+        >
+          <Icon name="external" className="h-4 w-4" />
+          Sign in with Lichess
+        </a>
+        <p className="mt-1 text-center text-xs text-ink-soft">
+          Lichess tells us only your username. Nothing else is shared.
+        </p>
         <p className="mt-4 text-sm text-ink-soft">
           {login ? 'New here? ' : 'Already have an account? '}
           <Link to={otherLink} className="text-ink underline underline-offset-4">

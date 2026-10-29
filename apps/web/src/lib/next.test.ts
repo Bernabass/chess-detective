@@ -17,6 +17,8 @@ describe('safeNext', () => {
       '//evil.example',
       `/${backslash}evil.example`,
       'javascript:alert(1)',
+      `/${String.fromCharCode(9)}/evil.example`,
+      `/${String.fromCharCode(10)}/evil.example`,
     ]) {
       expect(safeNext(bad)).toBe('/daily');
     }

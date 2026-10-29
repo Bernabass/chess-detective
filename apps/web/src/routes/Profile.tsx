@@ -57,7 +57,29 @@ export function ProfilePage() {
   );
   return (
     <>
-      <PageTitle lead={`Detective since ${joined}.`}>
+      <PageTitle
+        lead={
+          <>
+            Detective since {joined}.
+            {p.lichess !== undefined && (
+              <>
+                {' '}
+                Lichess:{' '}
+                <a
+                  href={p.lichess.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-ink underline underline-offset-4"
+                >
+                  @{p.lichess.username}
+                  <Icon name="external" className="h-3.5 w-3.5" />
+                  <span className="sr-only">(Lichess profile, opens in a new tab)</span>
+                </a>
+              </>
+            )}
+          </>
+        }
+      >
         <span className="inline-flex max-w-full flex-wrap items-center gap-2 break-all">
           <Icon name="user" className="h-7 w-7 text-brass" />
           {p.username}
