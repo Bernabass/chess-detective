@@ -174,6 +174,66 @@ describe('leaderboards', () => {
   });
 });
 
+describe('Sign in with Lichess', () => {
+  it('starts with a full navigation that returns to where the player came from', async () => {
+    renderApp('/register?next=%2Fdaily%2F3', fakeApi({ 'GET /auth/me': { body: GUEST_ME } }));
+    const link = await screen.findByRole('link', { name: 'Sign in with Lichess' });
+    expect(link).toHaveAttribute('href', '/api/auth/lichess/start?return_to=%2Fdaily%2F3');
+  });
+
+  it.each([
+    ['cancelled', 'Lichess sign-in was cancelled.'],
+    ['expired', 'That Lichess sign-in expired, or was started in another browser.'],
+    ['failed', "Couldn't sign in with Lichess."],
+    ['busy', 'Too many sign-in attempts from your network.'],
+  ])('explains why it came back (%s)', async (reason, text) => {
+    renderApp(`/login?lichess=${reason}`, fakeApi({ 'GET /auth/me': { body: GUEST_ME } }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(text);
+  });
+
+  it.each(['%3Cscript%3E', '__proto__', 'constructor', 'toString'])(
+    'ignores an unknown reason (%s)',
+    async (reason) => {
+      renderApp(`/login?lichess=${reason}`, fakeApi({ 'GET /auth/me': { body: GUEST_ME } }));
+      await screen.findByRole('link', { name: 'Sign in with Lichess' });
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    },
+  );
+
+  it("links a Lichess user's profile to Lichess", async () => {
+    const api = fakeApi({
+      'GET /auth/me': { body: GUEST_ME },
+      'GET /users/Thibault': {
+        body: {
+          username: 'Thibault',
+          joined: '2026-11-01T09:00:00Z',
+          stats: STATS,
+          lichess: { username: 'Thibault', url: 'https://lichess.org/@/thibault' },
+        },
+      },
+      'GET /users/holmes': {
+        body: { username: 'holmes', joined: '2026-11-01T09:00:00Z', stats: STATS },
+      },
+    });
+    renderApp('/u/Thibault', api);
+    const link = await screen.findByRole('link', { name: /@Thibault/ });
+    expect(link).toHaveAttribute('href', 'https://lichess.org/@/thibault');
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('shows no Lichess link for a password account', async () => {
+    const api = fakeApi({
+      'GET /auth/me': { body: GUEST_ME },
+      'GET /users/holmes': {
+        body: { username: 'holmes', joined: '2026-11-01T09:00:00Z', stats: STATS },
+      },
+    });
+    renderApp('/u/holmes', api);
+    await screen.findByText('Win rate');
+    expect(screen.queryByText(/Lichess:/)).not.toBeInTheDocument();
+  });
+});
+
 describe('profiles and the archive', () => {
   it('shows the stats and the guess distribution, with a table for screen readers', async () => {
     const api = fakeApi({

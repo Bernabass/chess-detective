@@ -103,6 +103,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/lichess/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Start Sign in with Lichess
+         * @description A browser navigation, not an API call (SPEC §10.6). Creates a one-time state (stored
+         *     hashed, with the PKCE code verifier, the caller's guest player and return_to, for 10
+         *     minutes), binds it to this browser with the rg_oauth cookie, and redirects to Lichess's
+         *     authorization page. Rate limited per IP; when limited, it redirects to
+         *     /login?lichess=busy instead.
+         */
+        get: operations["lichessStart"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/lichess/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Finish Sign in with Lichess
+         * @description Where Lichess sends the browser back. Checks state against the rg_oauth cookie and the
+         *     stored state (single use, 10 minutes), exchanges the code, reads the Lichess account,
+         *     revokes the token at once (Lichess tokens are never stored or logged), finds the account
+         *     by its Lichess id only (never by username) or creates one, merges the guest, starts a
+         *     session and redirects to return_to. Any failure redirects to
+         *     /login?lichess=cancelled|expired|failed.
+         */
+        get: operations["lichessCallback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/daily": {
         parameters: {
             query?: never;
@@ -449,6 +498,17 @@ export interface components {
             /** Format: date-time */
             joined: string;
             stats: components["schemas"]["Stats"];
+            lichess?: components["schemas"]["LichessLink"];
+        };
+        /** @description The user's Lichess account, for users who signed in with Lichess. */
+        LichessLink: {
+            /** @example Thibault */
+            username: string;
+            /**
+             * Format: uri
+             * @example https://lichess.org/@/thibault
+             */
+            url: string;
         };
         ArchiveResult: {
             status: components["schemas"]["AttemptStatus"];
@@ -625,6 +685,52 @@ export interface operations {
                 content?: never;
             };
             default: components["responses"]["Problem"];
+        };
+    };
+    lichessStart: {
+        parameters: {
+            query?: {
+                /** @description Where to go afterwards. Only paths on this site; anything else becomes /daily. */
+                return_to?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description To Lichess (or to /login?lichess=busy). */
+            302: {
+                headers: {
+                    Location: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    lichessCallback: {
+        parameters: {
+            query?: {
+                code?: string;
+                state?: string;
+                error?: string;
+                error_description?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description To return_to, or to /login?lichess=<reason>. */
+            302: {
+                headers: {
+                    Location: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     getToday: {
