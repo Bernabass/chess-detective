@@ -84,19 +84,34 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
   6. Tests added for a failed revocation's log line, the cookie being cleared, and a password user's Lichess sign-in. The e2e test now waits for sign-out before continuing.
   - Also: a malformed callback redirects to the sign-in page, and the web `next` check refuses control characters like the server's.
 
-**Manual check against real lichess.org** (your account): **pending.** Run the steps in How to try it and tell me what you saw; I record it here before tagging `phase-8`.
+**Manual check against real lichess.org** (your account)
+- **First run: the sign-in failed, and the cause was on our side.** Every callback was logged with `transaction: creating the Lichess user: ERROR: column "lichess_username" of relation "users" does not exist (SQLSTATE 42703)`. `pnpm db:migrate` hadn't run on the development database since Phase 7, so migration 00003 was missing. The Lichess side behaved as designed:
+  - step 4: the consent page said "Allow http://localhost to access your Bernabas9 account", with only "Only public data";
+  - step 7: no localhost app on `lichess.org/account/security`, so the token was revoked even though the sign-in failed;
+  - step 10: no code or token in the log.
+- **Fixed after the first run:**
+  1. Migration 00003 applied to the development database (`pnpm db:migrate`: `migration applied` version 3, `database is up to date`).
+  2. `retrograde serve` now refuses to start while the database lacks any of its migrations, and says: ``the database is missing migration 00003_lichess_username.sql: run `pnpm db:migrate` (or `retrograde migrate`), then start again`` (DECISIONS 2026-10-29, "Pending migrations stop the API"). Tests:
+     - `TestServeRefusesADatabaseWithPendingMigrations` (runs `serve` on a database with everything but 00003);
+     - `TestPendingMigrationsListsWhatTheDatabaseLacks`;
+     - `TestStartupWithAnUnreachableDatabaseLogsAnErrorAndStarts`.
+  3. Failed Lichess callbacks caused on our side (the database, Lichess errors) are logged at ERROR. The user's own failures (cancelled, expired, another browser's link, a hand-made link without a code) stay at INFO. Test: `TestLichessFailureLogLevels`, which also reproduces this failure by dropping the column.
+  4. The consent page names the app by its callback address (`http://localhost`), not by the client id. Step 4 and the known issues are corrected.
+  - **Mutation checks:** with the startup check removed, `serve` started and the test failed; with every failure logged at INFO, the four our-side cases failed.
+  - **Evidence after the fixes:** `pnpm check` green in 89 s (engine 269 + 34, generator 37, web 99, golangci-lint `0 issues`); `pnpm test:api` all 10 Go packages ok; `pnpm test:e2e` 68 passed (2.5 min).
+- **Second run:** pending. Repeat steps 2–10 and tell me what you saw; I record it here before tagging `phase-8`.
 
 **Known issues / follow-ups**
 - Linking a Lichess identity to an existing password account isn't possible in v1 (SPEC §13).
-- The Lichess consent page names the client by `BASE_URL`'s host (`localhost:5173` in development).
+- The Lichess consent page names the app by its callback address, so it shows `http://localhost` in development (and the production domain later).
 
 **How to try it** (VS Code terminal, PowerShell, in the project folder; PostgreSQL running)
 
 The manual test with your real Lichess account. No new `.env` lines are needed: the defaults are `LICHESS_BASE_URL=https://lichess.org`, and the client ID is your `BASE_URL`'s host, `localhost:5173`.
-1. Run `pnpm dev`.
+1. Run `pnpm dev`. If the API stops at once with "the database is missing migration …", run `pnpm db:migrate` and start again.
 2. Open a **private window** at http://localhost:5173/daily. Close How to play, then play and submit one guess (any legal game of the right length). Note its feedback row.
 3. Click **Sign in** → **Sign in with Lichess**.
-4. On lichess.org (sign in there if asked), the authorization page should name `localhost:5173` and say it uses only public data. It must not ask for any permissions such as playing games or reading email. Click **Authorize**.
+4. On lichess.org (sign in there if asked), the authorization page should say "Allow http://localhost to access your … account" and list only public data. It must not ask for any permissions such as playing games or reading email. Click **Authorize**.
 5. You land back on http://localhost:5173/daily. The header shows your Lichess username (or `name-2` if a Retrograde account already uses that name), and your guess row from step 2 is still there.
 6. Click your name. The profile says **Lichess: @YourName**, and the link opens your Lichess profile.
 7. In another tab, open https://lichess.org/account/security. Under third-party applications there should be **no** entry for `localhost:5173`, because the token was revoked right after reading your account.

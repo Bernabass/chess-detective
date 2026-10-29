@@ -24,7 +24,7 @@ Chess detective puzzles built on **retrograde analysis**: players reason *backwa
 ## Commands (root `package.json` scripts; set up in Phase 0, keep this list accurate)
 - `pnpm install`: install JS deps; its `prepare` script also points git at `.githooks/`
 - Database: the owner's **local PostgreSQL**, configured by `DATABASE_URL` in `.env`. `pnpm db:up` / `pnpm db:down` (Docker) exist only as an optional alternative.
-- `pnpm dev`: run the Go API and the Vite dev server together (Vite proxies `/api` to Go)
+- `pnpm dev`: run the Go API and the Vite dev server together (Vite proxies `/api` to Go). The API refuses to start while migrations are pending: run `pnpm db:migrate`
 - `pnpm check`: lint + typecheck + fast tests for every TS package, plus `go vet`, golangci-lint and Go unit tests. Must pass before every commit.
 - `pnpm --filter @retrograde/engine test` / `test:slow`: engine fast / slow suites (same for `@retrograde/generator`; both slow suites run nightly in CI)
 - `pnpm test:api`: Go unit + integration tests (needs Postgres running)

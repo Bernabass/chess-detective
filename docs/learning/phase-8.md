@@ -9,7 +9,7 @@ Code: [internal/lichess/client.go](../../services/api/internal/lichess/client.go
 ```
 browser ──GET /api/auth/lichess/start──▶ Retrograde: make state + code_verifier, store them,
         ◀── 302 to lichess.org/oauth?client_id&redirect_uri&code_challenge&state ──
-browser ──▶ lichess.org: "localhost:5173 wants to access your account (public data only)"
+browser ──▶ lichess.org: "Allow http://localhost to access your account" (public data only)
         ◀── 302 to /api/auth/lichess/callback?code=liu_…&state=… ──
 browser ──GET callback──▶ Retrograde: check state; POST /api/token (code + code_verifier) → token;
                          GET /api/account (Bearer token) → id, username; DELETE /api/token;
@@ -51,6 +51,15 @@ SPEC §10.6 was written before implementation, so every detail was checked again
 - **Browser e2e tests** use a tiny Node fake with an Authorize/Cancel page, started next to the e2e API.
 - **A manual run against the real lichess.org** with a real account confirms what fakes can't: the consent page, the revocation showing up on `/account/security`, and the logs.
 
+## 6. What the manual test caught
+
+The first run against the real lichess.org failed, and every automated test had passed. The development database had never been migrated after Phase 7, so the column `users.lichess_username` didn't exist. The tests never noticed because each one migrates its own fresh schema. The API started happily and failed only when the first query touched the missing column. Two lessons, both now in the code:
+
+- **Fail fast on schema drift.** `retrograde serve` asks goose which of its embedded migrations the database hasn't applied (`store.PendingMigrations`, read-only) and refuses to start if there are any, naming the command that fixes it. It deliberately doesn't apply them itself: a server that changes the schema as a side effect of starting is surprising in production. Applying migrations is a separate, explicit step (`pnpm db:migrate`, or the release step in a deployment).
+- **Log levels are for whoever is on call.** "The user clicked Cancel" is normal and logged at INFO. "Our database rejected the insert" needs someone to act, so it's logged at ERROR (`auth.LichessUserCaused` decides which). Before the fix, both were INFO, and the real failure looked like routine noise.
+
+The revocation still worked during the failure: no app showed up on `lichess.org/account/security`. That's the payoff of revoking the token whatever happens, before touching the database.
+
 ## Interview questions you should be able to answer
 
 - *What does PKCE protect against, and why does it remove the need for a client secret?* A stolen authorization code: redeeming it needs the verifier, which only the starting server knows.
@@ -58,3 +67,4 @@ SPEC §10.6 was written before implementation, so every detail was checked again
 - *Why not link accounts by matching usernames?* Usernames are claims, not proof; the provider's stable user id is what it authenticates.
 - *Why revoke the access token immediately?* We only needed it once; a token that doesn't exist can't leak.
 - *How do you test OAuth without the real provider?* A fake provider implementing the same protocol checks, plus one manual run against the real one.
+- *Your tests pass, but production fails with "column does not exist". What happened, and how do you prevent it?* The tests migrate their own databases; the real one wasn't migrated. Check for pending migrations at startup and refuse to run, with a message that names the fix.
