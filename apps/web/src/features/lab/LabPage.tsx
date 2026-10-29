@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router';
 import { Board, type BoardHandle } from '../../components/Board';
 import { Icon } from '../../components/Icon';
 import { Button, Card, Eyebrow, PageTitle } from '../../components/ui';
+import { useCopy } from '../../lib/clipboard';
 import { useTitle } from '../../lib/useTitle';
 import { FenField } from './editor/FenField';
 import { Palette } from './editor/Palette';
@@ -74,7 +75,7 @@ export function LabPage() {
     },
     [fen],
   );
-  const [copied, setCopied] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [copied, copy] = useCopy();
   const board = useRef<BoardHandle>(null);
 
   const analysis = useAnalysis(fen, depth);
@@ -122,29 +123,8 @@ export function LabPage() {
     return highlight?.arrows ?? [];
   }, [preview, highlight]);
 
-  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyLink = (): void => {
-    const url = new URL(labPath(fields), window.location.origin).toString();
-    const show = (state: 'copied' | 'failed'): void => {
-      setCopied(state);
-      if (copiedTimer.current !== null) clearTimeout(copiedTimer.current);
-      copiedTimer.current = setTimeout(() => {
-        setCopied('idle');
-      }, 2500);
-    };
-    // navigator.clipboard only exists on secure origins (https, localhost).
-    if (!('clipboard' in navigator)) {
-      show('failed');
-      return;
-    }
-    navigator.clipboard.writeText(url).then(
-      () => {
-        show('copied');
-      },
-      () => {
-        show('failed');
-      },
-    );
+    copy(new URL(labPath(fields), window.location.origin).toString());
   };
 
   const verdict = result?.verdict ?? null;

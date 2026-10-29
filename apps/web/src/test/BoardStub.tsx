@@ -8,7 +8,7 @@ import type { BoardHandle, BoardProps } from '../components/Board';
 export const BoardStub = forwardRef<BoardHandle, BoardProps>(function BoardStub(props, ref) {
   useImperativeHandle(
     ref,
-    () => ({ dragNewPiece: () => undefined, setPiece: () => undefined }),
+    () => ({ dragNewPiece: () => undefined, setPiece: () => undefined, sync: () => undefined }),
     [],
   );
   return (
@@ -18,6 +18,8 @@ export const BoardStub = forwardRef<BoardHandle, BoardProps>(function BoardStub(
       data-fen={props.fen}
       data-highlights={(props.highlights ?? []).join(' ')}
       data-arrows={(props.arrows ?? []).map(([a, b]) => `${a}${b}`).join(' ')}
+      data-marks={(props.marks ?? []).join(' ')}
+      data-turn={props.play?.turnColor}
     />
   );
 });

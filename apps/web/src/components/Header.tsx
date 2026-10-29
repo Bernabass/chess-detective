@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Link, NavLink } from 'react-router';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router';
+import { useLogout, useMe } from '../lib/queries';
 import { useThemePreference, type ThemePreference } from '../lib/theme';
 import { Icon, type IconName } from './Icon';
 
@@ -51,6 +52,83 @@ function navClass({ isActive }: { isActive: boolean }): string {
   }`;
 }
 
+/**
+ * Who's playing: "Sign in" for guests (with or without a guest session), the username and Sign
+ * out for an account. Unknown (API down) reads as a guest.
+ */
+function Account({ onNavigate, inMenu = false }: { onNavigate?: () => void; inMenu?: boolean }) {
+  const me = useMe();
+  const logout = useLogout();
+  const navigate = useNavigate();
+  const { pathname, search } = useLocation();
+  const username = me.data !== undefined && !me.data.guest ? me.data.username : undefined;
+  const pill =
+    'rounded-md border border-card-edge bg-card px-3 py-1.5 text-sm font-medium text-ink no-underline hover:bg-paper';
+
+  if (username === undefined) {
+    const here = pathname.startsWith('/login') || pathname.startsWith('/register');
+    return (
+      <NavLink
+        to={here ? '/login' : `/login?next=${encodeURIComponent(pathname + search)}`}
+        onClick={onNavigate}
+        className={inMenu ? (s) => `block ${navClass(s)}` : pill}
+      >
+        Sign in
+      </NavLink>
+    );
+  }
+  return (
+    <div className={inMenu ? 'flex flex-col' : 'flex items-center gap-2'}>
+      <NavLink
+        to={`/u/${encodeURIComponent(username)}`}
+        onClick={onNavigate}
+        className={
+          inMenu ? (s) => `block ${navClass(s)}` : `${pill} inline-flex items-center gap-1.5`
+        }
+      >
+        <Icon name="user" className="h-4 w-4" />
+        <span className="max-w-32 truncate">{username}</span>
+      </NavLink>
+      <button
+        type="button"
+        disabled={logout.isPending}
+        onClick={() => {
+          logout.mutate(undefined, {
+            onSuccess: () => {
+              onNavigate?.();
+              void navigate('/');
+            },
+          });
+        }}
+        className={
+          inMenu
+            ? `text-left ${navClass({ isActive: false })}`
+            : `${pill} inline-flex items-center gap-1.5`
+        }
+      >
+        <Icon name="logout" className="h-4 w-4" />
+        Sign out
+      </button>
+    </div>
+  );
+}
+
+/** On a phone the account lives in the menu; a signed-in player still sees who they are. */
+function MobileUser() {
+  const me = useMe();
+  const username = me.data !== undefined && !me.data.guest ? me.data.username : undefined;
+  if (username === undefined) return null;
+  return (
+    <Link
+      to={`/u/${encodeURIComponent(username)}`}
+      aria-label={`Signed in as ${username}`}
+      className="rounded-md p-2 text-ink sm:hidden"
+    >
+      <Icon name="user" className="h-5 w-5" />
+    </Link>
+  );
+}
+
 export function Header() {
   const [open, setOpen] = useState(false);
 
@@ -74,12 +152,10 @@ export function Header() {
 
         <div className="ml-auto flex items-center gap-2">
           <ThemeToggle />
-          <NavLink
-            to="/login"
-            className="hidden rounded-md border border-card-edge bg-card px-3 py-1.5 text-sm font-medium text-ink no-underline hover:bg-paper sm:inline-block"
-          >
-            Sign in
-          </NavLink>
+          <div className="hidden sm:block">
+            <Account />
+          </div>
+          <MobileUser />
           <button
             type="button"
             className="rounded-md p-2 text-ink md:hidden"
@@ -97,7 +173,7 @@ export function Header() {
       {open && (
         <nav id="mobile-nav" aria-label="Main" className="border-t border-rule px-4 py-2 md:hidden">
           <ul className="flex flex-col">
-            {[...NAV, { to: '/login', label: 'Sign in' } as const].map((item) => (
+            {NAV.map((item) => (
               <li key={item.to}>
                 <NavLink
                   to={item.to}
@@ -110,6 +186,14 @@ export function Header() {
                 </NavLink>
               </li>
             ))}
+            <li className="sm:hidden">
+              <Account
+                inMenu
+                onNavigate={() => {
+                  setOpen(false);
+                }}
+              />
+            </li>
           </ul>
         </nav>
       )}

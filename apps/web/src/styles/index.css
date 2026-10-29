@@ -29,6 +29,13 @@
   --focus: #1f5fa8;
   --sq-light: #eadbc0;
   --sq-dark: #b08a64;
+  /* Daily feedback (SPEC §8.3): always shown with an icon too, never by colour alone. */
+  --hit: #3f7d45;
+  --hit-ink: #ffffff;
+  --near: #d4a72c;
+  --near-ink: #2a241d;
+  --miss: #77706a;
+  --miss-ink: #ffffff;
   --shadow: 0 1px 0 rgb(42 36 29 / 0.06), 0 6px 18px -10px rgb(42 36 29 / 0.25);
   color-scheme: light;
 }
@@ -49,6 +56,12 @@
   --focus: #8ab4f8;
   --sq-light: #c9b99c;
   --sq-dark: #8a6a4c;
+  --hit: #4f9a55;
+  --hit-ink: #0f1a10;
+  --near: #d6b043;
+  --near-ink: #1e1a10;
+  --miss: #4a5059;
+  --miss-ink: #e9e1d2;
   --shadow: 0 1px 0 rgb(0 0 0 / 0.3), 0 8px 20px -12px rgb(0 0 0 / 0.6);
   color-scheme: dark;
 }
@@ -71,6 +84,12 @@
   --color-warn: var(--warn);
   --color-bad: var(--bad);
   --color-focus: var(--focus);
+  --color-hit: var(--hit);
+  --color-hit-ink: var(--hit-ink);
+  --color-near: var(--near);
+  --color-near-ink: var(--near-ink);
+  --color-miss: var(--miss);
+  --color-miss-ink: var(--miss-ink);
   --shadow-card: var(--shadow);
 }
 
@@ -127,6 +146,37 @@ cg-board square.selected {
 cg-board square.note-highlight {
   box-shadow: inset 0 0 0 4px var(--accent);
   background-color: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* The daily game's difference overlay: squares that differ from the target. Dashed, so it
+   doesn't look like a detective-note highlight, and visible on both square colours. */
+cg-board square.diff-mark {
+  outline: 3px dashed #1f5fa8;
+  outline-offset: -5px;
+  box-shadow: inset 0 0 0 5px rgb(255 255 255 / 0.55);
+  background-color: rgb(31 95 168 / 0.28);
+}
+
+/* Legal destinations (play mode): a dot on empty squares, a ring on captures. */
+cg-board square.move-dest {
+  background: radial-gradient(rgb(42 36 29 / 0.38) 19%, transparent 21%);
+}
+
+cg-board square.move-dest:hover {
+  background: rgb(31 95 168 / 0.3);
+}
+
+cg-board square.oc.move-dest {
+  background: radial-gradient(transparent 0%, transparent 79%, rgb(42 36 29 / 0.38) 80%);
+}
+
+cg-board square.check {
+  background: radial-gradient(
+    ellipse at center,
+    rgb(220 40 30 / 0.9) 0%,
+    rgb(220 40 30 / 0.5) 30%,
+    transparent 75%
+  );
 }
 
 /* Coordinates inside the board (chessground's defaults sit partly outside it). One dark colour

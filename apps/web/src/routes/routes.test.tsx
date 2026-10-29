@@ -44,7 +44,7 @@ function renderAt(path: string) {
 const PAGES: [string, RegExp][] = [
   ['/', /Don't ask for the best move/],
   ['/daily', /Daily proof game/],
-  ['/daily/12', /Daily proof game #12/],
+  ['/daily/12', /Retrograde #12/],
   ['/archive', /Archive/],
   ['/leaderboard', /Leaderboard/],
   ['/u/holmes', /holmes/],

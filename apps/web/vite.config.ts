@@ -26,11 +26,15 @@ export default defineConfig(({ mode }) => {
     preview: {
       port: 4173,
       strictPort: true,
-      // e2e runs have no API server: let /api requests fail fast instead of logging proxy errors.
-      proxy: env.E2E === '1' ? {} : apiProxy,
+      // e2e runs use their own API (scripts/e2e-api.mjs) on E2E_API_PORT.
+      proxy:
+        env.E2E === '1' ? { '/api': `http://127.0.0.1:${env.E2E_API_PORT ?? '8092'}` } : apiProxy,
     },
     test: {
       environment: 'jsdom',
+      // One jsdom per worker instead of per file (it was over half the suite's time), with each
+      // file still isolated in its own VM context.
+      pool: 'vmThreads',
       setupFiles: ['./src/test/setup.ts'],
       include: ['src/**/*.test.{ts,tsx}'],
     },

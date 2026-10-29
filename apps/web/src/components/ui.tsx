@@ -45,16 +45,21 @@ export function Card({
   className = '',
   as: Tag = 'section',
   labelledBy,
+  flush = false,
 }: {
   children: ReactNode;
   className?: string;
   as?: 'section' | 'div' | 'article';
   labelledBy?: string;
+  /** No padding: the content (a table, a list) runs to the edges. */
+  flush?: boolean;
 }) {
   return (
     <Tag
       aria-labelledby={labelledBy}
-      className={`rounded-lg border border-card-edge bg-card p-4 shadow-card sm:p-5 ${className}`}
+      className={`rounded-lg border border-card-edge bg-card shadow-card ${
+        flush ? 'overflow-hidden' : 'p-4 sm:p-5'
+      } ${className}`}
     >
       {children}
     </Tag>
