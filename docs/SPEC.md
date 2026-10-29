@@ -621,7 +621,7 @@ The engine worker is exposed with Comlink: `analyze(fen)`, `lastMoves(fen, depth
 | `LAUNCH_DATE` | `2026-11-01` | Puzzle #1 date (UTC); `number = days since LAUNCH_DATE + 1`, and nothing is scheduled before it. Local development: `pnpm seed` sets it to 14 days before today when `.env` doesn't have it. |
 | `COOKIE_SECURE` | `true` in production | |
 | `LICHESS_BASE_URL` | `https://lichess.org` | Overridable for tests |
-| `LICHESS_CLIENT_ID` | `retrograde` | Lichess PKCE needs no registration; any stable id works (verify in Lichess docs) |
+| `LICHESS_CLIENT_ID` | `retrograde.example` | Lichess PKCE needs no registration: "choose any unique client id" (Lichess API docs). Defaults to `BASE_URL`'s host, e.g. `localhost:5173` in development. (Decided 2026-10-29.) |
 | `LOG_LEVEL` | `info` | |
 | `TRUSTED_PROXIES` | `10.0.0.0/8,127.0.0.1` | Comma-separated IPs/CIDRs. `X-Forwarded-For` is honoured only when the direct peer is in this list; otherwise the client IP is the TCP peer address. Empty (the default) trusts no proxy. Used for per-IP rate limits and logs. |
 | `RATE_LIMIT_SCALE` | `1` (default) | Multiplies every rate limit. Only the e2e tests raise it; the API logs a warning at startup whenever it isn't 1. (Decided 2026-10-29.) |
@@ -736,7 +736,7 @@ All paths are under `/api`. JSON in and out; errors use `application/problem+jso
 | `POST /daily/{number}/hints` | session | Next hint → `{hintIndex, hint}` |
 | `GET /leaderboards/daily/{number}?limit=100` | none | Top entries + the caller's own rank if signed in |
 | `GET /leaderboards/all-time?metric=current_streak\|max_streak\|solved` | none | Top 100 |
-| `GET /users/{username}` | none | Public profile and stats |
+| `GET /users/{username}` | none | Public profile and stats (and a link to the Lichess profile for users who signed in with Lichess) |
 | `GET /archive?page=` | none | Past puzzles: number, day, difficulty, plies (and the caller's result if any) |
 
 ### 10.5 Guess submission (one transaction)
@@ -761,7 +761,13 @@ All paths are under `/api`. JSON in and out; errors use `application/problem+jso
   3. GET `/api/account` with the bearer token to read the Lichess `id` and `username`.
   4. Revoke the token right away (DELETE `/api/token`). We never store Lichess tokens.
   5. Find the user by `lichess_user_id` or create one. Use the Lichess username if free, else append a numeric suffix. Merge the guest, create the session, redirect to `return_to`.
-- **Rate limits** (in-memory token buckets, injected, not global): login/register 10 per minute per IP and per username; guesses and hints 30 per minute per player; `POST /daily/{number}/start` 300 per hour per IP (generous, because many users share an IP); OAuth start 10 per minute per IP. The client IP comes from `X-Forwarded-For` only when the request arrives from an address in `TRUSTED_PROXIES` (§10.2).
+  6. (Decided 2026-10-29, after checking every detail against the Lichess API spec and `lichess-org/api-demo`.)
+     - **Only `lichess_user_id` links accounts**, never a matching username: that would let anyone take over an account by naming their Lichess account after it. A new Lichess user whose name is taken gets `name-2`, `name-3`, …; names are trimmed to fit 3–20 characters.
+     - **`state` is bound to the browser:** the start sets an `rg_oauth` cookie (HttpOnly, SameSite=Lax, path `/api/auth/lichess`, 10 minutes) holding the state, and the callback requires it, against login CSRF. The stored state is used once.
+     - The token request is form-encoded (as the Lichess API spec declares). `code_verifier` and `state` are 32 random bytes in base64url (43 characters; Lichess requires at least 43).
+     - Every failure redirects the browser to `/login?lichess=cancelled|expired|failed|busy`, which explains it.
+     - `users.lichess_username` is stored (refreshed at each sign-in) for the profile's link to `https://lichess.org/@/<id>`.
+- **Rate limits** (in-memory token buckets, injected, not global): login/register 60 per minute per IP and 10 per minute per username (the per-username limit is what stops password guessing; per IP is generous because many real users share one IP behind carrier NAT or a campus network); guesses and hints 30 per minute per player; `POST /daily/{number}/start` 300 per hour per IP; OAuth start 60 per minute per IP. (Per-IP limits raised 2026-10-29.) The client IP comes from `X-Forwarded-For` only when the request arrives from an address in `TRUSTED_PROXIES` (§10.2).
 
 ### 10.7 Leaderboards
 
@@ -892,7 +898,7 @@ Refs: §11.
 
 ## 13. Out of scope for v1 (ideas for later)
 
-Case Files story campaign with Holmes-style narration; composer mode with the uniqueness checker; head-to-head races; partial retrograde analysis puzzles; fairy-chess proof games; puzzle ratings with Glicko-2 from solve results; porting the solver to Go or Rust/WASM to compare performance; stretch rules from §5.6.
+Linking a Lichess identity to an existing password account (a "link while signed in" flow: v1 never links accounts, a Lichess sign-in always means the account with that Lichess id); Case Files story campaign with Holmes-style narration; composer mode with the uniqueness checker; head-to-head races; partial retrograde analysis puzzles; fairy-chess proof games; puzzle ratings with Glicko-2 from solve results; porting the solver to Go or Rust/WASM to compare performance; stretch rules from §5.6.
 
 ---
 

@@ -332,3 +332,26 @@ Append-only. Each entry: date, context, decision, consequences. Newest at the bo
 - **The countdown counts from the finished puzzle's day**, not the clock's: the next puzzle is out at the UTC midnight after that day, so a daily finished after midnight (or reopened later) says at once that the next one is ready.
 - **Focus after the last guess** moves to the result heading (Submit has gone); the promotion picker keeps Tab inside and gives focus back to the move field.
 - No new dependencies.
+
+## 2026-10-29: Phase 8 Sign in with Lichess
+- Context: Phase 8 plan, approved by the owner with all five proposals, account linking added to SPEC §13 as a later idea, and two changes (the manual log check covers `lio_`, `liu_` and `lip_`; per-IP limits raised).
+- **Verified against Lichess** before relying on SPEC §10.6 (Lichess API spec `lichess-org/api` `doc/specs/tags/oauth`, `tags/account/api-account.yaml` and the authentication introduction; `lichess-org/api-demo` `src/auth.ts` and `example/oauth-backend`; the server, `lichess-org/lila`: `conf/routes`, `modules/oauth/.../Protocol.scala`, `AccessTokenRequest.scala`, `modules/security/.../AccountSecurity.scala`):
+  - `GET /oauth` with `response_type=code`, `client_id`, `redirect_uri`, `code_challenge_method=S256` (the only method), `code_challenge`, `state` (returned verbatim); no scope needed for `GET /api/account`.
+  - No registration or secret: "choose any unique client id".
+  - `POST /api/token` is form-encoded (the API spec; the backend example sends JSON, which Lichess also takes), `redirect_uri` and `client_id` must match, `code_verifier` at least 43 characters. Tokens last about a year; no refresh tokens.
+  - `GET /api/account` returns `id` (stable, lower-case) and `username`. `DELETE /api/token` revokes (204). Failures come back as `error` (`access_denied` on cancel) and `state`.
+  - `http` redirect URIs are accepted for localhost only; production uses https.
+  - Users see authorized apps on `lichess.org/account/security`.
+- **Accounts are linked only by `lichess_user_id`** (owner's rule): a Lichess sign-in never signs into an account because its username matches. A taken name becomes `name-2`, `name-3`, ….
+- **No linking of a Lichess identity to an existing password account in v1** (SPEC §13).
+- **`LICHESS_CLIENT_ID` defaults to `BASE_URL`'s host** instead of `retrograde`: unique, and what the consent page shows.
+- **`state` bound to the browser** with the `rg_oauth` cookie (against login CSRF), and single use.
+- **Failures redirect to `/login?lichess=<reason>`** (`cancelled`, `expired`, `failed`, `busy`), never a JSON page. The OAuth start's rate limit also redirects (`busy`).
+- **`users.lichess_username`** (migration 00003) for the profile's link; refreshed at each sign-in.
+- **Usernames for new Lichess users:** the Lichess name, then `name-2` … `name-20`, then `name-<6 random digits>` (so someone who registers the numbered names can't lock a Lichess user out). If an insert finds the Lichess id already taken, a simultaneous first sign-in just created the account, and that account is used.
+- **The Lichess account is validated on arrival:** `username` must be 2–30 of `[A-Za-z0-9_-]` and `id` its lower-case form; anything else fails the sign-in. The profile link also URL-escapes the id.
+- **A malformed callback** (say, a repeated parameter) redirects to `/login?lichess=failed` like every other failure.
+- **Tokens:** used in memory to read the account, then revoked at once (also when reading the account failed); never stored or logged. Outbound calls have a 10 s client timeout and the revocation its own 5 s context.
+- **Per-IP limits raised** (owner): login/register 60 per minute per IP (from 10) and the Lichess start 60 per minute per IP, because many real users share an IP. The per-username login limit stays 10 per minute: it's what stops password guessing.
+- **Testing:** Go integration tests run the whole flow against an `httptest` fake Lichess that checks the PKCE pair, `redirect_uri`, `client_id` and the form encoding, and records issued and revoked tokens. The browser e2e tests use a Node fake (`scripts/fake-lichess.mjs`, started by `scripts/e2e-api.mjs` on port 8093) with an Authorize/Cancel page.
+- No new dependencies.

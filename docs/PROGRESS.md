@@ -14,7 +14,7 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 | 5 | Web shell and Lab | done (2026-10-23) | `phase-5` |
 | 6 | API core | done (2026-10-23) | `phase-6` |
 | 7 | Daily UI, leaderboards, profiles, archive | done (2026-10-29) | `phase-7` |
-| 8 | Sign in with Lichess | not started | |
+| 8 | Sign in with Lichess | in progress: waiting for the manual check on lichess.org | |
 | 9 | Polish and ship | not started | |
 
 ## Measurements
@@ -28,6 +28,88 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 | Lighthouse accessibility, /daily and /lab | | |
 
 ## Phase log
+
+### Phase 8: Sign in with Lichess (2026-10-29)
+
+**Verified against Lichess first** (your point 1). Every OAuth detail was checked in Lichess's own sources before relying on SPEC §10.6: the API spec (`lichess-org/api`), the demo app (`lichess-org/api-demo`) and the Lichess server (`lichess-org/lila`). What was checked and where is in DECISIONS (2026-10-29, Phase 8). Corrections to the spec:
+- the token request is form-encoded;
+- the `code_verifier` must be at least 43 characters;
+- `http` redirect URIs are only allowed for localhost;
+- users see authorized apps on `lichess.org/account/security`.
+
+**Done, by acceptance criterion**
+- **Full PKCE flow against a fake Lichess server in tests (state mismatch, expired state, token error and username collision).** `internal/httpapi/lichess_integration_test.go` runs the real handlers against an `httptest` fake Lichess that checks the PKCE pair, `redirect_uri`, `client_id`, the form encoding and single-use codes.
+  - **The flow:** `TestLichessSignInCreatesAnAccountAndMergesTheGuest`. A guest's guess moves to the new account, there's a 302 to `return_to`, the state is used up, the token is revoked, and the profile links to Lichess.
+  - **State mismatch:** `TestLichessStateMustBelongToThisBrowser`. A login-CSRF attempt: the victim, holding their own state cookie, opens the attacker's callback link. It's refused, and the code is never exchanged.
+  - **Expired state:** `TestLichessStateIsSingleUseAndExpires` covers no state, a replayed callback, and 10 minutes plus 1 second.
+  - **Token error, account error, cancel:** `TestLichessCancelAndFailures`.
+  - **Username collision:** `TestLichessSignInFindsAccountsByLichessIDOnly` (your point 2). A password account `magnus` exists, a Lichess user "Magnus" signs in, and gets a *new* account `Magnus-2`; `magnus` keeps its session and isn't linked. The same Lichess id with a changed case finds the same account, and a 2-letter name becomes `ab-2`.
+  - **Also:**
+    - two simultaneous first sign-ins end in one account;
+    - squatted names `name` … `name-20` still get `name-<6 digits>`;
+    - a password user who signs in with Lichess links nothing;
+    - the state cookie is cleared after a sign-in;
+    - a malformed callback goes to the sign-in page;
+    - the rate limit;
+    - off-site `return_to`.
+  - **In a browser:** `e2e/lichess.spec.ts` against a Node fake Lichess (`scripts/fake-lichess.mjs`) with an Authorize/Cancel page: sign-in keeps the guest's guess, sign-in again finds the same account, cancel shows the message, and a matching name never signs into the existing account.
+- **Tokens revoked after use and never stored or logged.**
+  - `TestLichessSecretsAreNeverLoggedOrStored` runs a success, a failed account read, a failed revocation (logged without the token), a cancel and a forged callback. It checks that no code, token or state the fake issued appears in any log line, and that no database column could hold a token.
+  - The fake counts revocations: exactly one per issued token, including when reading the account failed.
+- **Manual check against real lichess.org, documented here:** see below.
+- **Your points:**
+  - 1 (verified details, above);
+  - 2 (only `lichess_user_id` links accounts, tested above);
+  - 3 (profiles link to `https://lichess.org/@/<id>`; `pages.test.tsx` and e2e);
+  - 4 (the manual steps below).
+  - Also from your approval: per-IP limits are 60 per minute for login/register and the Lichess start, while per username stays 10 (`TestDefaultLimits`), and account linking is in SPEC §13.
+
+**Mutation checks:** to be sure the security tests can fail, each protection was broken in turn, and the matching test failed every time:
+- the browser binding (no cookie comparison);
+- linking by username;
+- no revocation;
+- logging the token.
+
+**Evidence**
+- `pnpm check`: green, 92–99 s right after edits (caches cold).
+  - Engine 269 + 34, generator 37, web 99; golangci-lint `0 issues` (also with the `integration` tag); Go tests ok.
+- `pnpm test:api`: all 10 Go packages ok; 12 Lichess integration tests.
+- `pnpm test:e2e`: 68 passed (2.1 min), including 3 Lichess flows and axe scans of the sign-in page with a Lichess message.
+- **Self-review** (separate review agent, read-only, security-focused; reran `pnpm check` and `pnpm test:api`). No critical findings. Fixed, from its findings:
+  1. The state-mismatch test only covered a *missing* cookie. The victim now holds their own cookie, so the comparison itself is tested; the mutation check above proves it.
+  2. Two simultaneous first sign-ins of one Lichess account made the second fail. It now finds the account the first one created (test).
+  3. Registering `name` … `name-100` could lock a Lichess user out. After `name-20`, random 6-digit suffixes follow (test).
+  4. `/login?lichess=__proto__` broke the sign-in page (prototype lookup). It now looks up own keys only (tests for `__proto__`, `constructor`, `toString`).
+  5. The Lichess `id` and `username` are validated on arrival, and the profile URL escapes the id (tests).
+  6. Tests added for a failed revocation's log line, the cookie being cleared, and a password user's Lichess sign-in. The e2e test now waits for sign-out before continuing.
+  - Also: a malformed callback redirects to the sign-in page, and the web `next` check refuses control characters like the server's.
+
+**Manual check against real lichess.org** (your account): **pending.** Run the steps in How to try it and tell me what you saw; I record it here before tagging `phase-8`.
+
+**Known issues / follow-ups**
+- Linking a Lichess identity to an existing password account isn't possible in v1 (SPEC §13).
+- The Lichess consent page names the client by `BASE_URL`'s host (`localhost:5173` in development).
+
+**How to try it** (VS Code terminal, PowerShell, in the project folder; PostgreSQL running)
+
+The manual test with your real Lichess account. No new `.env` lines are needed: the defaults are `LICHESS_BASE_URL=https://lichess.org`, and the client ID is your `BASE_URL`'s host, `localhost:5173`.
+1. Run `pnpm dev`.
+2. Open a **private window** at http://localhost:5173/daily. Close How to play, then play and submit one guess (any legal game of the right length). Note its feedback row.
+3. Click **Sign in** → **Sign in with Lichess**.
+4. On lichess.org (sign in there if asked), the authorization page should name `localhost:5173` and say it uses only public data. It must not ask for any permissions such as playing games or reading email. Click **Authorize**.
+5. You land back on http://localhost:5173/daily. The header shows your Lichess username (or `name-2` if a Retrograde account already uses that name), and your guess row from step 2 is still there.
+6. Click your name. The profile says **Lichess: @YourName**, and the link opens your Lichess profile.
+7. In another tab, open https://lichess.org/account/security. Under third-party applications there should be **no** entry for `localhost:5173`, because the token was revoked right after reading your account.
+8. **Sign out**, then sign in with Lichess again. You're back on the same account, with the same name and the same result.
+9. **Cancel path:** sign out, start Sign in with Lichess, and on lichess.org click **Cancel** (or Deny). You land on the sign-in page with "Lichess sign-in was cancelled."
+10. **Logs:** in the `pnpm dev` terminal (scroll back, or copy it into a file), search for `lio_`, `liu_` and `lip_`, the prefixes Lichess uses for OAuth tokens, authorization codes and personal tokens. None should appear.
+
+Tests:
+```powershell
+pnpm check
+pnpm test:api
+pnpm test:e2e      # includes Sign in with Lichess against a fake Lichess on port 8093
+```
 
 ### Phase 7: Daily UI, leaderboards, profiles, archive (2026-10-29)
 
