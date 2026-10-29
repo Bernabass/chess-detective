@@ -26,7 +26,12 @@ type Config struct {
 	CookieSecure bool
 	// TrustedProxies: X-Forwarded-For is honoured only from these peers.
 	TrustedProxies []netip.Prefix
+	// RateLimitScale multiplies every rate limit (1 in production; the e2e tests raise it).
+	RateLimitScale int
 }
+
+// maxRateLimitScale keeps the multiplied limits far from integer overflow.
+const maxRateLimitScale = 1_000_000
 
 // DefaultLaunchDate is the planned launch (SPEC §10.2).
 const DefaultLaunchDate = "2026-11-01"
@@ -89,6 +94,12 @@ func Load(lookup Lookup) (Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("COOKIE_SECURE must be true or false, got %q", get("COOKIE_SECURE", "")))
 	}
+
+	scale, err := strconv.Atoi(get("RATE_LIMIT_SCALE", "1"))
+	if err != nil || scale < 1 || scale > maxRateLimitScale {
+		errs = append(errs, fmt.Errorf("RATE_LIMIT_SCALE must be a whole number from 1 to %d, got %q", maxRateLimitScale, get("RATE_LIMIT_SCALE", "")))
+	}
+	cfg.RateLimitScale = scale
 
 	proxies, err := parseProxies(get("TRUSTED_PROXIES", ""))
 	if err != nil {
