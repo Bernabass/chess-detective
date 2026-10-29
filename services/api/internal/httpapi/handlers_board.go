@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"net/url"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
@@ -53,7 +54,11 @@ func (s *Server) GetUser(ctx context.Context, req GetUserRequestObject) (GetUser
 	if err != nil {
 		return nil, err //nolint:wrapcheck // domain errors are mapped in writeError
 	}
-	return GetUser200JSONResponse(Profile{Username: p.Username, Joined: p.Joined, Stats: toStats(p.Stats)}), nil
+	out := Profile{Username: p.Username, Joined: p.Joined, Stats: toStats(p.Stats)}
+	if p.LichessID != "" {
+		out.Lichess = &LichessLink{Username: p.LichessUsername, Url: "https://lichess.org/@/" + url.PathEscape(p.LichessID)}
+	}
+	return GetUser200JSONResponse(out), nil
 }
 
 // GetArchive lists past puzzles, newest first, with the caller's results.

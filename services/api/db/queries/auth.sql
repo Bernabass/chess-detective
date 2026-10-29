@@ -46,3 +46,21 @@ DELETE FROM sessions WHERE token_hash = @token_hash;
 UPDATE attempts SET player_id = @user_player_id
 WHERE attempts.player_id = @guest_player_id
   AND attempts.puzzle_id NOT IN (SELECT a.puzzle_id FROM attempts a WHERE a.player_id = @user_player_id);
+
+-- name: GetUserByLichessID :one
+-- The only way a Lichess sign-in finds an existing account: never by username.
+SELECT u.id, u.username::text AS username, p.id AS player_id
+FROM users u
+JOIN players p ON p.user_id = u.id
+WHERE u.lichess_user_id = @lichess_user_id;
+
+-- name: CreateLichessUser :one
+-- No row if the username or the Lichess id is already taken (the caller tries the next name,
+-- or finds the account another request just created).
+INSERT INTO users (username, lichess_user_id, lichess_username, created_at)
+VALUES (@username, @lichess_user_id, @lichess_username, @created_at)
+ON CONFLICT DO NOTHING
+RETURNING id, username::text AS username;
+
+-- name: SetLichessUsername :exec
+UPDATE users SET lichess_username = @lichess_username WHERE id = @id;

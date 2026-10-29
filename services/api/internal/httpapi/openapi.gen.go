@@ -298,6 +298,15 @@ type HintResult struct {
 	HintIndex int  `json:"hintIndex"`
 }
 
+// LichessLink The user's Lichess account, for users who signed in with Lichess.
+type LichessLink struct {
+	// Url Example: https://lichess.org/@/thibault
+	Url string `json:"url"`
+
+	// Username Example: Thibault
+	Username string `json:"username"`
+}
+
 // Me defines model for Me.
 type Me struct {
 	Guest    bool    `json:"guest"`
@@ -321,9 +330,12 @@ type Problem struct {
 
 // Profile defines model for Profile.
 type Profile struct {
-	Joined   time.Time `json:"joined"`
-	Stats    Stats     `json:"stats"`
-	Username string    `json:"username"`
+	Joined time.Time `json:"joined"`
+
+	// Lichess The user's Lichess account, for users who signed in with Lichess.
+	Lichess  *LichessLink `json:"lichess,omitempty"`
+	Stats    Stats        `json:"stats"`
+	Username string       `json:"username"`
 }
 
 // Puzzle defines model for Puzzle.
@@ -369,6 +381,20 @@ type GetArchiveParams struct {
 	Page *int `form:"page,omitempty" json:"page,omitempty"`
 }
 
+// LichessCallbackParams defines parameters for LichessCallback.
+type LichessCallbackParams struct {
+	Code             *string `form:"code,omitempty" json:"code,omitempty"`
+	State            *string `form:"state,omitempty" json:"state,omitempty"`
+	Error            *string `form:"error,omitempty" json:"error,omitempty"`
+	ErrorDescription *string `form:"error_description,omitempty" json:"error_description,omitempty"`
+}
+
+// LichessStartParams defines parameters for LichessStart.
+type LichessStartParams struct {
+	// ReturnTo Where to go afterwards. Only paths on this site; anything else becomes /daily.
+	ReturnTo *string `form:"return_to,omitempty" json:"return_to,omitempty"`
+}
+
 // GetAllTimeLeaderboardParams defines parameters for GetAllTimeLeaderboard.
 type GetAllTimeLeaderboardParams struct {
 	Metric GetAllTimeLeaderboardParamsMetric `form:"metric" json:"metric"`
@@ -402,6 +428,12 @@ type ServerInterface interface {
 	// GetArchive Past daily puzzles, newest first
 	// (GET /archive)
 	GetArchive(w http.ResponseWriter, r *http.Request, params GetArchiveParams)
+	// LichessCallback Finish Sign in with Lichess
+	// (GET /auth/lichess/callback)
+	LichessCallback(w http.ResponseWriter, r *http.Request, params LichessCallbackParams)
+	// LichessStart Start Sign in with Lichess
+	// (GET /auth/lichess/start)
+	LichessStart(w http.ResponseWriter, r *http.Request, params LichessStartParams)
 	// Login Sign in
 	// (POST /auth/login)
 	Login(w http.ResponseWriter, r *http.Request)
@@ -476,6 +508,111 @@ func (siw *ServerInterfaceWrapper) GetArchive(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetArchive(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LichessCallback operation middleware
+func (siw *ServerInterfaceWrapper) LichessCallback(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params LichessCallbackParams
+
+	// ------------- Optional query parameter "code" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "code", r.URL.Query(), &params.Code, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "code"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "code", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "error" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "error", r.URL.Query(), &params.Error, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "error"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "error", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "error_description" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "error_description", r.URL.Query(), &params.ErrorDescription, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "error_description"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "error_description", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LichessCallback(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// LichessStart operation middleware
+func (siw *ServerInterfaceWrapper) LichessStart(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params LichessStartParams
+
+	// ------------- Optional query parameter "return_to" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "return_to", r.URL.Query(), &params.ReturnTo, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "return_to"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "return_to", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.LichessStart(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -899,6 +1036,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/register", wrapper.Register)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/login", wrapper.Login)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/auth/logout", wrapper.Logout)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/lichess/start", wrapper.LichessStart)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/auth/lichess/callback", wrapper.LichessCallback)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/daily", wrapper.GetToday)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/daily/{number}", wrapper.GetPuzzle)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/daily/{number}/start", wrapper.StartPuzzle)
@@ -951,6 +1090,50 @@ func (response GetArchivedefaultApplicationProblemPlusJSONResponse) VisitGetArch
 	w.WriteHeader(response.StatusCode)
 	_, err := buf.WriteTo(w)
 	return err
+}
+
+type LichessCallbackRequestObject struct {
+	Params LichessCallbackParams
+}
+
+type LichessCallbackResponseObject interface {
+	VisitLichessCallbackResponse(w http.ResponseWriter) error
+}
+
+type LichessCallback302ResponseHeaders struct {
+	Location string
+}
+
+type LichessCallback302Response struct {
+	Headers LichessCallback302ResponseHeaders
+}
+
+func (response LichessCallback302Response) VisitLichessCallbackResponse(w http.ResponseWriter) error {
+	w.Header().Set("Location", fmt.Sprint(response.Headers.Location))
+	w.WriteHeader(302)
+	return nil
+}
+
+type LichessStartRequestObject struct {
+	Params LichessStartParams
+}
+
+type LichessStartResponseObject interface {
+	VisitLichessStartResponse(w http.ResponseWriter) error
+}
+
+type LichessStart302ResponseHeaders struct {
+	Location string
+}
+
+type LichessStart302Response struct {
+	Headers LichessStart302ResponseHeaders
+}
+
+func (response LichessStart302Response) VisitLichessStartResponse(w http.ResponseWriter) error {
+	w.Header().Set("Location", fmt.Sprint(response.Headers.Location))
+	w.WriteHeader(302)
+	return nil
 }
 
 type LoginRequestObject struct {
@@ -1729,6 +1912,12 @@ type StrictServerInterface interface {
 	// GetArchive Past daily puzzles, newest first
 	// (GET /archive)
 	GetArchive(ctx context.Context, request GetArchiveRequestObject) (GetArchiveResponseObject, error)
+	// LichessCallback Finish Sign in with Lichess
+	// (GET /auth/lichess/callback)
+	LichessCallback(ctx context.Context, request LichessCallbackRequestObject) (LichessCallbackResponseObject, error)
+	// LichessStart Start Sign in with Lichess
+	// (GET /auth/lichess/start)
+	LichessStart(ctx context.Context, request LichessStartRequestObject) (LichessStartResponseObject, error)
 	// Login Sign in
 	// (POST /auth/login)
 	Login(ctx context.Context, request LoginRequestObject) (LoginResponseObject, error)
@@ -1828,6 +2017,58 @@ func (sh *strictHandler) GetArchive(w http.ResponseWriter, r *http.Request, para
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetArchiveResponseObject); ok {
 		if err := validResponse.VisitGetArchiveResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// LichessCallback operation middleware
+func (sh *strictHandler) LichessCallback(w http.ResponseWriter, r *http.Request, params LichessCallbackParams) {
+	var request LichessCallbackRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.LichessCallback(ctx, request.(LichessCallbackRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "LichessCallback")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LichessCallbackResponseObject); ok {
+		if err := validResponse.VisitLichessCallbackResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// LichessStart operation middleware
+func (sh *strictHandler) LichessStart(w http.ResponseWriter, r *http.Request, params LichessStartParams) {
+	var request LichessStartRequestObject
+
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.LichessStart(ctx, request.(LichessStartRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "LichessStart")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(LichessStartResponseObject); ok {
+		if err := validResponse.VisitLichessStartResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -2208,72 +2449,83 @@ func (sh *strictHandler) GetUser(w http.ResponseWriter, r *http.Request, usernam
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"8cOKnjV+dyQv3y3/fwA=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

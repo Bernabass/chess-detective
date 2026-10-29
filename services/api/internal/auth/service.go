@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/Bernabass/chess-detective/services/api/internal/clock"
 	"github.com/Bernabass/chess-detective/services/api/internal/daily"
+	"github.com/Bernabass/chess-detective/services/api/internal/lichess"
 	"github.com/Bernabass/chess-detective/services/api/internal/store"
 	"github.com/Bernabass/chess-detective/services/api/internal/store/sqlcdb"
 )
@@ -41,6 +43,12 @@ type Account struct {
 type Service struct {
 	Store *store.Store
 	Clock clock.Clock
+	// Lichess and LichessCallback are Sign in with Lichess (nil: not available). LichessCallback
+	// is BASE_URL + /api/auth/lichess/callback.
+	Lichess         *lichess.Client
+	LichessCallback string
+	// Logger records what the caller can't see (a token revocation that failed). Nil: silent.
+	Logger *slog.Logger
 }
 
 // Resolve looks up a session token. It returns ok=false for an unknown or expired token. When
@@ -171,8 +179,19 @@ func (s *Service) Login(ctx context.Context, current *Session, username, passwor
 // puzzles the account hasn't played move over; the rest go with the guest), recomputes the
 // account's stats, drops the old session and creates a new one.
 func (s *Service) signIn(ctx context.Context, q *sqlcdb.Queries, current *Session, accountPlayer int64) (Session, error) {
+	var guest *int64
 	if current != nil {
-		p, err := q.GetPlayer(ctx, current.PlayerID)
+		id := current.PlayerID
+		guest = &id
+	}
+	return s.signInMerging(ctx, q, current, guest, accountPlayer)
+}
+
+// signInMerging is signIn with the guest to merge named separately from the session to rotate:
+// a Lichess sign-in merges the guest who started it (stored with its state).
+func (s *Service) signInMerging(ctx context.Context, q *sqlcdb.Queries, current *Session, guest *int64, accountPlayer int64) (Session, error) {
+	if guest != nil {
+		p, err := q.GetPlayer(ctx, *guest)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 		case err != nil:
@@ -188,6 +207,8 @@ func (s *Service) signIn(ctx context.Context, q *sqlcdb.Queries, current *Sessio
 				return Session{}, fmt.Errorf("deleting guest: %w", err)
 			}
 		}
+	}
+	if current != nil {
 		if err := q.DeleteSession(ctx, current.TokenHash); err != nil {
 			return Session{}, fmt.Errorf("rotating session: %w", err)
 		}

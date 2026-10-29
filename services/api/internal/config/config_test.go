@@ -187,3 +187,39 @@ func TestRateLimitScale(t *testing.T) {
 		}
 	}
 }
+
+func TestLichessSettings(t *testing.T) {
+	cfg, err := Load(mapLookup(map[string]string{"DATABASE_URL": "postgres://x"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LichessBaseURL.String() != "https://lichess.org" {
+		t.Errorf("LichessBaseURL = %q", cfg.LichessBaseURL)
+	}
+	// The client id defaults to BASE_URL's host: unique, and what the consent page shows.
+	if cfg.LichessClientID != "localhost:5173" {
+		t.Errorf("LichessClientID = %q, want localhost:5173", cfg.LichessClientID)
+	}
+	cfg, err = Load(mapLookup(map[string]string{
+		"DATABASE_URL":      "postgres://x",
+		"BASE_URL":          "https://retrograde.example",
+		"LICHESS_BASE_URL":  "http://127.0.0.1:8093/",
+		"LICHESS_CLIENT_ID": "my-client",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LichessBaseURL.String() != "http://127.0.0.1:8093" || cfg.LichessClientID != "my-client" {
+		t.Errorf("Lichess settings = %q, %q", cfg.LichessBaseURL, cfg.LichessClientID)
+	}
+	cfg, err = Load(mapLookup(map[string]string{"DATABASE_URL": "postgres://x", "BASE_URL": "https://retrograde.example"}))
+	if err != nil || cfg.LichessClientID != "retrograde.example" {
+		t.Errorf("LichessClientID = %q (%v), want retrograde.example", cfg.LichessClientID, err)
+	}
+	for _, bad := range []string{"lichess.org", "ftp://lichess.org", "https://"} {
+		_, err := Load(mapLookup(map[string]string{"DATABASE_URL": "postgres://x", "LICHESS_BASE_URL": bad}))
+		if err == nil || !strings.Contains(err.Error(), "LICHESS_BASE_URL") {
+			t.Errorf("LICHESS_BASE_URL=%q: err = %v", bad, err)
+		}
+	}
+}

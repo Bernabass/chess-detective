@@ -10,6 +10,39 @@ import (
 	"time"
 )
 
+const createLichessUser = `-- name: CreateLichessUser :one
+INSERT INTO users (username, lichess_user_id, lichess_username, created_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING
+RETURNING id, username::text AS username
+`
+
+type CreateLichessUserParams struct {
+	Username        string
+	LichessUserID   *string
+	LichessUsername *string
+	CreatedAt       time.Time
+}
+
+type CreateLichessUserRow struct {
+	ID       int64
+	Username string
+}
+
+// No row if the username or the Lichess id is already taken (the caller tries the next name,
+// or finds the account another request just created).
+func (q *Queries) CreateLichessUser(ctx context.Context, arg CreateLichessUserParams) (CreateLichessUserRow, error) {
+	row := q.db.QueryRow(ctx, createLichessUser,
+		arg.Username,
+		arg.LichessUserID,
+		arg.LichessUsername,
+		arg.CreatedAt,
+	)
+	var i CreateLichessUserRow
+	err := row.Scan(&i.ID, &i.Username)
+	return i, err
+}
+
 const createPlayer = `-- name: CreatePlayer :one
 
 INSERT INTO players (user_id, created_at) VALUES ($1, $2)
@@ -145,6 +178,27 @@ func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (GetSess
 	return i, err
 }
 
+const getUserByLichessID = `-- name: GetUserByLichessID :one
+SELECT u.id, u.username::text AS username, p.id AS player_id
+FROM users u
+JOIN players p ON p.user_id = u.id
+WHERE u.lichess_user_id = $1
+`
+
+type GetUserByLichessIDRow struct {
+	ID       int64
+	Username string
+	PlayerID int64
+}
+
+// The only way a Lichess sign-in finds an existing account: never by username.
+func (q *Queries) GetUserByLichessID(ctx context.Context, lichessUserID *string) (GetUserByLichessIDRow, error) {
+	row := q.db.QueryRow(ctx, getUserByLichessID, lichessUserID)
+	var i GetUserByLichessIDRow
+	err := row.Scan(&i.ID, &i.Username, &i.PlayerID)
+	return i, err
+}
+
 const getUserByUsername = `-- name: GetUserByUsername :one
 SELECT u.id, u.username, u.password_hash, u.created_at, p.id AS player_id
 FROM users u
@@ -191,6 +245,20 @@ func (q *Queries) MoveGuestAttempts(ctx context.Context, arg MoveGuestAttemptsPa
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setLichessUsername = `-- name: SetLichessUsername :exec
+UPDATE users SET lichess_username = $1 WHERE id = $2
+`
+
+type SetLichessUsernameParams struct {
+	LichessUsername *string
+	ID              int64
+}
+
+func (q *Queries) SetLichessUsername(ctx context.Context, arg SetLichessUsernameParams) error {
+	_, err := q.db.Exec(ctx, setLichessUsername, arg.LichessUsername, arg.ID)
+	return err
 }
 
 const touchSession = `-- name: TouchSession :exec

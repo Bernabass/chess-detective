@@ -59,7 +59,8 @@ ORDER BY rank, username
 LIMIT 100;
 
 -- name: GetProfile :one
-SELECT u.username::text AS username, u.created_at, p.id AS player_id
+SELECT u.username::text AS username, u.created_at, p.id AS player_id,
+       u.lichess_user_id, u.lichess_username
 FROM users u
 JOIN players p ON p.user_id = u.id
 WHERE u.username = @username;

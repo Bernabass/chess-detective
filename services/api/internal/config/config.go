@@ -28,6 +28,12 @@ type Config struct {
 	TrustedProxies []netip.Prefix
 	// RateLimitScale multiplies every rate limit (1 in production; the e2e tests raise it).
 	RateLimitScale int
+	// LichessBaseURL is where Sign in with Lichess goes (a fake server in tests), without a
+	// trailing slash.
+	LichessBaseURL *url.URL
+	// LichessClientID identifies this app to Lichess (no registration; any unique id).
+	// Defaults to BASE_URL's host.
+	LichessClientID string
 }
 
 // maxRateLimitScale keeps the multiplied limits far from integer overflow.
@@ -100,6 +106,16 @@ func Load(lookup Lookup) (Config, error) {
 		errs = append(errs, fmt.Errorf("RATE_LIMIT_SCALE must be a whole number from 1 to %d, got %q", maxRateLimitScale, get("RATE_LIMIT_SCALE", "")))
 	}
 	cfg.RateLimitScale = scale
+
+	lichess, err := url.Parse(strings.TrimSuffix(get("LICHESS_BASE_URL", "https://lichess.org"), "/"))
+	if err != nil || (lichess.Scheme != "http" && lichess.Scheme != "https") || lichess.Host == "" {
+		errs = append(errs, fmt.Errorf("LICHESS_BASE_URL must be an absolute http(s) URL, got %q", get("LICHESS_BASE_URL", "")))
+	}
+	cfg.LichessBaseURL = lichess
+	cfg.LichessClientID = get("LICHESS_CLIENT_ID", "")
+	if cfg.LichessClientID == "" && baseURL != nil {
+		cfg.LichessClientID = baseURL.Host
+	}
 
 	proxies, err := parseProxies(get("TRUSTED_PROXIES", ""))
 	if err != nil {

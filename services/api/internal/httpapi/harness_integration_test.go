@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/Bernabass/chess-detective/services/api/internal/dbtest"
 	"github.com/Bernabass/chess-detective/services/api/internal/httpapi"
 	"github.com/Bernabass/chess-detective/services/api/internal/leaderboard"
+	"github.com/Bernabass/chess-detective/services/api/internal/lichess"
 	"github.com/Bernabass/chess-detective/services/api/internal/store"
 	"github.com/Bernabass/chess-detective/services/api/internal/store/sqlcdb"
 )
@@ -56,6 +58,27 @@ type testAPI struct {
 	clock   *clock.Fake
 	srv     *httptest.Server
 	puzzles []testPuzzle
+	// lichess is a fake lichess.org for Sign in with Lichess; logs captures every log line.
+	lichess *fakeLichess
+	logs    *syncBuffer
+}
+
+// syncBuffer is a log destination the server's goroutines can share.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p) //nolint:wrapcheck // bytes.Buffer never fails
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // newAPI starts the API on a fresh schema with the test puzzles scheduled, at noon on the day
@@ -93,11 +116,21 @@ func newAPI(t *testing.T, limits func(clock.Clock) httpapi.Limits) *testAPI {
 		lim = limits(clk)
 	}
 	base, _ := url.Parse(origin)
+	api.logs = &syncBuffer{}
+	logger := slog.New(slog.NewJSONHandler(api.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	api.lichess = newFakeLichess(t)
+	lichessURL, _ := url.Parse(api.lichess.srv.URL)
+	authSvc := &auth.Service{
+		Store:   st,
+		Clock:   clk,
+		Lichess: &lichess.Client{BaseURL: lichessURL, ClientID: "localhost:5173", HTTP: api.lichess.srv.Client()},
+		Logger:  logger,
+	}
 	handler := httpapi.NewHandler(httpapi.Options{
-		Logger:      slog.New(slog.DiscardHandler),
+		Logger:      logger,
 		DB:          st,
 		Clock:       clk,
-		Auth:        &auth.Service{Store: st, Clock: clk},
+		Auth:        authSvc,
 		Daily:       dailySvc,
 		Leaderboard: &leaderboard.Service{Store: st, Clock: clk, Puzzles: dailySvc},
 		Limits:      lim,
@@ -105,6 +138,7 @@ func newAPI(t *testing.T, limits func(clock.Clock) httpapi.Limits) *testAPI {
 	})
 	api.srv = httptest.NewServer(handler)
 	t.Cleanup(api.srv.Close)
+	authSvc.LichessCallback = api.srv.URL + "/api/auth/lichess/callback"
 	return api
 }
 
