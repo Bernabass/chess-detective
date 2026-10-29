@@ -111,6 +111,10 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
   - 4xx responses are no longer retried by the query client, so "not released" shows at once;
   - the play board fits a 720 px-tall screen;
   - API problem `detail`s are now UI sentences.
+- **CI caught a racy unit test** after the phase commits (`8ccee2f`).
+  - `pages.test.tsx` › "shows the user in the header, and signs out" failed on both CI jobs: `expected '/about' to be '/'`.
+  - Signing out first refreshes the header's data (`/auth/me`), then redirects home. The test checked the URL as soon as the header said "Sign in", and on CI's faster machines that came before the redirect. Locally it always passed.
+  - The app was right; the test now waits for the redirect (`4a6185d`, "test(web): wait for the redirect after signing out"). It passed 3 runs in a row locally, then CI passed on both jobs. `phase-7` is tagged on that commit.
 
 **Known issues / follow-ups**
 - Sign in with Lichess stays disabled ("coming soon") until Phase 8.
