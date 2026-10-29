@@ -61,3 +61,5 @@ export type { SolveOptions, SolveResult } from './solver/search';
 export { solveProofGame } from './solver/search';
 export type { ShortestOptions, ShortestResult } from './solver/shortest';
 export { minimumPlies, shortestProofGame } from './solver/shortest';
+
+export { dailyFeedback } from './daily/feedback';
