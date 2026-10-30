@@ -14,7 +14,7 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 | 5 | Web shell and Lab | done (2026-10-23) | `phase-5` |
 | 6 | API core | done (2026-10-23) | `phase-6` |
 | 7 | Daily UI, leaderboards, profiles, archive | done (2026-10-29) | `phase-7` |
-| 8 | Sign in with Lichess | in progress: waiting for the manual check on lichess.org | |
+| 8 | Sign in with Lichess | done (2026-10-30) | `phase-8` |
 | 9 | Polish and ship | not started | |
 
 ## Measurements
@@ -29,7 +29,7 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
 
 ## Phase log
 
-### Phase 8: Sign in with Lichess (2026-10-29)
+### Phase 8: Sign in with Lichess (2026-10-29 to 2026-10-30)
 
 **Verified against Lichess first** (your point 1). Every OAuth detail was checked in Lichess's own sources before relying on SPEC §10.6: the API spec (`lichess-org/api`), the demo app (`lichess-org/api-demo`) and the Lichess server (`lichess-org/lila`). What was checked and where is in DECISIONS (2026-10-29, Phase 8). Corrections to the spec:
 - the token request is form-encoded;
@@ -99,7 +99,15 @@ Claude Code updates this file at the end of every phase. Newest phase at the top
   4. The consent page names the app by its callback address (`http://localhost`), not by the client id. Step 4 and the known issues are corrected.
   - **Mutation checks:** with the startup check removed, `serve` started and the test failed; with every failure logged at INFO, the four our-side cases failed.
   - **Evidence after the fixes:** `pnpm check` green in 89 s (engine 269 + 34, generator 37, web 99, golangci-lint `0 issues`); `pnpm test:api` all 10 Go packages ok; `pnpm test:e2e` 68 passed (2.5 min).
-- **Second run:** pending. Repeat steps 2–10 and tell me what you saw; I record it here before tagging `phase-8`.
+- **Second run (2026-10-30, after restarting `pnpm dev`): every step passed.**
+  - 2–3: a guest guess submitted, then Sign in with Lichess.
+  - 4: "Allow http://localhost to access your Bernabas9 account", only public data, no other permissions.
+  - 5: back on `/daily`, signed in as Bernabas9, with the guest's guess row still there. Puzzle #22 then solved in 2 guesses with no hints; the leaderboard showed Bernabas9 at rank 1, marked "You".
+  - 6: the profile's Lichess link opened the Lichess profile.
+  - 7: no localhost app on `lichess.org/account/security` (only browser sessions and the official Lichess mobile app), so the token was revoked.
+  - 8: signed out and in again with Lichess: the same account and the same result.
+  - 9: Cancel on lichess.org led to the sign-in page with "Lichess sign-in was cancelled."
+  - 10: no `lio_`, `liu_`, `lip_` or `"level":"ERROR"` in the `pnpm dev` output.
 
 **Known issues / follow-ups**
 - Linking a Lichess identity to an existing password account isn't possible in v1 (SPEC §13).
