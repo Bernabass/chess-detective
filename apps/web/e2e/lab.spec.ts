@@ -5,7 +5,9 @@ const lab = (fen: string): string => `/lab?fen=${encodeURIComponent(fen)}`;
 const verdict = (page: Page) => page.locator('[data-verdict]');
 
 test.describe('Lab', () => {
-  test('an illegal example shows the verdict and the reason (ARCHITECTURE.md §9.3)', async ({ page }) => {
+  test('an illegal example shows the verdict and the reason (ARCHITECTURE.md §9.3)', async ({
+    page,
+  }) => {
     await page.goto('/lab');
     await page.getByRole('link', { name: /Three pawns, two files/ }).click();
     await expect(verdict(page)).toHaveAttribute('data-verdict', 'illegal');

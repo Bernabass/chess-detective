@@ -10,7 +10,7 @@ const DOT = String.fromCodePoint(0x00b7);
 const NL = String.fromCharCode(10);
 
 describe('shareText (ARCHITECTURE.md §8.6)', () => {
-  it("matches the documented example exactly", () => {
+  it('matches the documented example exactly', () => {
     const text = shareText({
       number: 142,
       difficulty: 3,

@@ -47,6 +47,7 @@ pnpm dev                  # open http://localhost:5173
 ```sh
 pnpm check       # lint, typecheck, fast tests (TS and Go), golangci-lint
 pnpm test:api    # Go integration tests against the test database
+pnpm test:e2e    # Playwright end-to-end tests (needs the test database too)
 pnpm --filter @retrograde/engine test:slow
 ```
 

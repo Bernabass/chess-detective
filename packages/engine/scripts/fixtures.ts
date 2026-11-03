@@ -217,9 +217,21 @@ console.log(
 const split = (s: string): string[] => s.split(' ');
 const FEEDBACK_CASES: [string, string, string][] = [
   // [comment, solution, guess]; the first three are ARCHITECTURE.md §8.3's table.
-  ['ARCHITECTURE.md §8.3 example 1', 'e2e4 e7e5 g1f3 g8f6 f3g1 f6g8', 'g1f3 e7e5 e2e4 g8f6 f3g1 b8c6'],
-  ['ARCHITECTURE.md §8.3 example 2', 'g1f3 g8f6 f3g1 f6g8 g1f3 b8c6', 'g1f3 b8c6 f3g1 c6b8 g1f3 g8f6'],
-  ['ARCHITECTURE.md §8.3 example 3', 'g1f3 g8f6 f3g1 f6g8 g1f3 b8c6', 'g1f3 g8f6 f3g1 f6g8 g1f3 g8f6'],
+  [
+    'ARCHITECTURE.md §8.3 example 1',
+    'e2e4 e7e5 g1f3 g8f6 f3g1 f6g8',
+    'g1f3 e7e5 e2e4 g8f6 f3g1 b8c6',
+  ],
+  [
+    'ARCHITECTURE.md §8.3 example 2',
+    'g1f3 g8f6 f3g1 f6g8 g1f3 b8c6',
+    'g1f3 b8c6 f3g1 c6b8 g1f3 g8f6',
+  ],
+  [
+    'ARCHITECTURE.md §8.3 example 3',
+    'g1f3 g8f6 f3g1 f6g8 g1f3 b8c6',
+    'g1f3 g8f6 f3g1 f6g8 g1f3 g8f6',
+  ],
   ['the solution itself', 'e2e4 e7e5 g1f3 b8c6 f1b5', 'e2e4 e7e5 g1f3 b8c6 f1b5'],
   ['no move in common', 'e2e4 e7e5 g1f3 b8c6 f1b5', 'd2d4 d7d5 c2c4 c7c6 b1c3'],
   ['same moves, swapped within each colour', 'e2e4 e7e5 d2d4 d7d5', 'd2d4 d7d5 e2e4 e7e5'],
@@ -245,7 +257,9 @@ const feedbackVectors = FEEDBACK_CASES.map(([comment, solution, guess]) => ({
 const TABLE_EXPECTED = ['YGYGGX', 'GYGXGY', 'GGGGGX'];
 TABLE_EXPECTED.forEach((want, i) => {
   if (feedbackVectors[i]?.feedback !== want) {
-    throw new Error(`feedback reference disagrees with ARCHITECTURE.md §8.3 example ${String(i + 1)}`);
+    throw new Error(
+      `feedback reference disagrees with ARCHITECTURE.md §8.3 example ${String(i + 1)}`,
+    );
   }
 });
 writeFileSync(
