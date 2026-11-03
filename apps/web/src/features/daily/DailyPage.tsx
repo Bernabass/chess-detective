@@ -90,7 +90,9 @@ export function DailyPage() {
   if (!valid) {
     body = <NotFound text="Puzzle numbers start at #1." />;
   } else if (puzzle.isPending) {
-    body = <p className="text-ink-soft">Opening the case file{ELLIPSIS}</p>;
+    // A full screen tall, so the footer starts below the fold and doesn't jump when the puzzle
+    // arrives (a layout shift Lighthouse measured at 0.27).
+    body = <p className="min-h-dvh text-ink-soft">Opening the case file{ELLIPSIS}</p>;
   } else if (puzzle.isError) {
     body =
       puzzle.error instanceof ApiError && puzzle.error.status === 404 ? (
