@@ -10,6 +10,7 @@ const API_PORT = 8092;
  * PostgreSQL and TEST_DATABASE_URL).
  *   pnpm --filter @retrograde/web test:e2e   e2e tests (project "e2e")
  *   pnpm --filter @retrograde/web shots      screenshots for visual review (project "shots")
+ *   pnpm --filter @retrograde/web gifs       the README's demo GIFs (project "gifs")
  */
 export default defineConfig({
   testDir: './e2e',
@@ -30,6 +31,11 @@ export default defineConfig({
     {
       name: 'shots',
       testMatch: 'screenshots.ts',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'gifs',
+      testMatch: 'demo-gifs.ts',
       use: { ...devices['Desktop Chrome'] },
     },
   ],

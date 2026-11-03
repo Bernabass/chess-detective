@@ -78,6 +78,8 @@ Conventions:
  └──────────────────────────────────────┘
 ```
 
+In production the web app is static files on Vercel's CDN, the Go API runs as a Vercel Function, and PostgreSQL is a Neon database; the same API also runs from a container image with the web app embedded (§11.5).
+
 Web routes (React Router, each page loaded lazily so the Lab's board and engine code aren't in the first download):
 
 | Route | Page |
@@ -90,6 +92,7 @@ Web routes (React Router, each page loaded lazily so the Lab's board and engine 
 | `/u/:username` | Public profile (§8.5) |
 | `/login`, `/register` | Accounts (§10.6) |
 | `/about` | What retrograde analysis is |
+| `/privacy` | What is stored, the cookies, and who else processes requests (§11.1) |
 
 ### 3.2 Key choices
 
@@ -118,16 +121,19 @@ retrograde/
 │  └─ test/
 ├─ services/api/                  Go module
 │  ├─ cmd/retrograde/             subcommands: serve, migrate, import-puzzles, schedule, cleanup
+│  ├─ cmd/server/                 the server alone: the entry point Vercel builds
 │  ├─ cmd/e2e-setup/              test-only: prepares the e2e database
-│  ├─ internal/{config,httpapi,auth,lichess,daily,leaderboard,chessrules,ratelimit,store,clock}
+│  ├─ internal/{config,server,httpapi,auth,lichess,daily,leaderboard,chessrules,ratelimit,store,clock,webui}
 │  └─ db/{migrations,queries}/
 ├─ data/puzzles-v1.jsonl          the committed puzzle pool (§7)
 ├─ fixtures/                      cross-language test vectors (generated)
 ├─ scripts/                       cross-platform Node helpers for package.json scripts
-├─ docs/                          this document, screenshots
+├─ docs/                          this document, DEPLOY.md, RUNNING.md, screenshots, demo GIFs
 ├─ package.json                   root task scripts
+├─ vercel.json                    Vercel: the two services, routing, headers, the daily cron
+├─ Dockerfile                     the container image (API with the web app embedded)
 ├─ docker-compose.yml             optional Postgres for development (host port 5433)
-└─ .github/workflows/ci.yml
+└─ .github/workflows/             CI and deployments (ci.yml), loading puzzle data (puzzle-data.yml)
 ```
 
 ### 3.4 Technology choices
@@ -152,6 +158,7 @@ Every dependency is pinned to an exact version; upgrades are deliberate commits.
 - Tools: Git, the current Node LTS with pnpm, Go, and PostgreSQL with two databases, `retrograde` (development) and `retrograde_test` (integration and end-to-end tests). `pnpm db:up` starts an optional Postgres in Docker instead.
 - Settings come from environment variables, falling back to the nearest `.env` file (copy `.env.example`). Go programs read `.env` themselves through a small standard-library parser; real environment variables win, and the process environment is never modified.
 - Paths may contain spaces, so every script quotes them.
+- `pnpm dev` applies pending migrations as its own first step, then runs the API and the Vite dev server; the server itself never migrates (§10.1). `pnpm build` and `pnpm start` build and run the production binary with the web app embedded. [RUNNING.md](RUNNING.md) has every command.
 
 ---
 
@@ -591,15 +598,17 @@ The engine runs in Web Workers exposed with Comlink: `analyze(fen)`, `lastMoves(
 
 ### 10.1 Layout
 
-- `cmd/retrograde`: one binary with the subcommands `serve`, `migrate`, `import-puzzles <file.jsonl>` (idempotent), `schedule --from --days` and `cleanup`.
-  - `serve` refuses to start while the database lacks any of the binary's migrations and names the fix (`pnpm db:migrate`, or `retrograde migrate`): otherwise the first query touching the missing schema would fail much later. The check is read-only. If the database can't be reached, `serve` logs an error and starts anyway, so `/api/health` reports the outage.
-  - `serve` also runs the cleanup job (§10.3) at startup and every hour, and logs a warning when `RATE_LIMIT_SCALE` isn't 1.
+- `cmd/retrograde`: one binary with the subcommands `serve`, `migrate`, `import-puzzles <file.jsonl>` (idempotent), `schedule --from --days` and `cleanup`. `cmd/server` runs the server alone, with settings from the environment: it's the entry point Vercel's Go runtime builds. Both call `internal/server`, which starts in this order:
+  1. **Unsafe production settings stop it** (§10.2), before it touches the database or a port.
+  2. **Pending migrations stop it**, naming the fix (`pnpm db:migrate`, or `retrograde migrate`): otherwise the first query touching the missing schema would fail much later. The check is read-only. If the database can't be reached, the server logs an error and starts anyway, so `/api/health` reports the outage.
+  3. It warns when `RATE_LIMIT_SCALE` isn't 1 and when fewer than 30 days of puzzles remain scheduled.
+  4. Where the process lives on between requests (a container, local development), it runs the cleanup job (§10.3) at startup and every hour. On Vercel, instances pause between requests, so a daily cron calls the cleanup endpoint instead.
 - `internal/config`: settings from the environment and `.env`, validated at startup.
 - `internal/httpapi`: the generated strict-server interface, middleware (request id, logging, recover, security headers, rate limits, CSRF/origin check, contract validation), and `application/problem+json` errors whose `detail` is a full sentence for the UI.
 - `internal/auth`: passwords, sessions, guests and the guest merge, Sign in with Lichess. `internal/lichess`: the Lichess OAuth client.
 - `internal/daily`: the puzzle of the day, attempts, guesses, feedback, hints, streaks; pure functions wherever possible, tested without HTTP or a database.
 - `internal/leaderboard`, `internal/chessrules` (the adapter around the Go chess library), `internal/ratelimit`, `internal/store` (sqlc queries and a transaction helper), `internal/clock` (injected, so day boundaries are testable with a fake clock).
-- The production build embeds the web app (`go:embed`) and serves it with an SPA fallback. `go:embed` can't read outside the Go module, so the build copies `apps/web/dist` into the module first.
+- `internal/webui`: in builds with the `webui` tag (the container image and `pnpm build`), the web app is embedded (`go:embed`) and served next to the API: hashed `/assets/*` cached for a year, everything else revalidated, client routes falling back to `index.html`, and a missing file with an extension a 404 rather than HTML. `go:embed` can't read outside the Go module, so the build copies `apps/web/dist` into the module first. Without the tag (development, Vercel) the Vite dev server or the CDN serves the web app.
 
 **Chess rules on the server.** `internal/chessrules` uses `github.com/corentings/chess/v2` on positions, not on the library's `Game`, so draw rules never end a game, and it enforces the engine's UCI rules (a promotion letter exactly when a pawn reaches the last rank). It agrees with every replay vector, including the SAN of every move.
 
@@ -619,6 +628,13 @@ The engine runs in Web Workers exposed with Comlink: `analyze(fen)`, `lastMoves(
 | `LOG_LEVEL` | `info` | |
 | `TRUSTED_PROXIES` | `10.0.0.0/8,127.0.0.1` | `X-Forwarded-For` is honoured only when the direct peer is in this list; empty (the default) trusts no proxy |
 | `RATE_LIMIT_SCALE` | `1` (default) | Multiplies every rate limit. Only the end-to-end tests raise it. |
+| `APP_ENV` | `production` | Production mode, below. Automatic on Vercel. |
+| `CRON_SECRET` | 32+ random characters | Authorizes `GET /api/internal/cleanup` (§10.4), which Vercel's cron calls as `Authorization: Bearer <CRON_SECRET>`. Unset: the endpoint refuses every request. |
+| `CLIENT_IP_HEADER` | `X-Real-IP` on Vercel | A header the platform sets to the client's IP and clients can't forge (Vercel overwrites `X-Forwarded-For` and `X-Real-IP`). Used for rate limits instead of the connection's address. Not combined with `TRUSTED_PROXIES`. |
+
+**On Vercel** (the platform sets `VERCEL=1`), the defaults follow the deployment: `HOST` is `0.0.0.0` and `PORT` is Vercel's. `BASE_URL`, when not set, is the project's production domain in production, and otherwise the deployment's own address, which belongs to that deployment alone (a branch alias can move to a later deployment). The deployment's other addresses are also accepted as origins by the CSRF check, so a preview works under either of its URLs; Lichess sign-in on a preview uses its deployment address.
+
+**Production mode** (`APP_ENV=production`, or on Vercel) refuses to start with obviously unsafe settings: `COOKIE_SECURE` not true; a `BASE_URL` that isn't a public https address; `RATE_LIMIT_SCALE` other than 1; no explicit `LAUNCH_DATE`; `TRUSTED_PROXIES` that trusts every address; `LICHESS_BASE_URL` other than https://lichess.org; a `CRON_SECRET` under 32 characters. On Vercel it also requires `CRON_SECRET` and `CLIENT_IP_HEADER`, and refuses a database URL that points at the local machine or sets `sslmode=disable`. Every problem is reported at once.
 
 ### 10.3 Data model
 
@@ -638,7 +654,7 @@ The schema lives in `services/api/db/migrations` (goose, append-only); queries a
 
 Indexes serve the daily leaderboard (solved, non-archive attempts by puzzle and finish time), session expiry, guest cleanup and OAuth state expiry; an integration test checks with `EXPLAIN` that the hot and periodic queries use them. Timestamps are scanned as UTC, so the API doesn't depend on the server's time zone.
 
-**Cleanup job** (`retrograde cleanup`, and hourly inside `serve`): deletes expired sessions, expired OAuth states, and guest players older than 30 days with no guesses (their attempts, sessions and stats cascade). A guest with a guess is kept. Without it, the guests that visitors and crawlers create and leave would accumulate.
+**Cleanup job**: deletes expired sessions, expired OAuth states, and guest players older than 30 days with no guesses (their attempts, sessions and stats cascade). A guest with a guess is kept. Without it, the guests that visitors and crawlers create and leave would accumulate. It runs hourly inside a long-lived server, on demand with `retrograde cleanup`, and on Vercel once a day at 03:00 UTC (Hobby crons run once a day, at some point within the hour) through `GET /api/internal/cleanup`. Each run is idempotent, because a cron delivery can be missed or repeated; it also reports how many days of puzzles remain scheduled and logs a warning below 30.
 
 ### 10.4 Endpoints
 
@@ -662,6 +678,7 @@ All paths are under `/api`; JSON in and out; errors are `application/problem+jso
 | `GET /leaderboards/all-time?metric=current_streak\|max_streak\|solved` | none | Top 100 |
 | `GET /users/{username}` | none | Public profile and stats, with a link to the Lichess profile for Lichess users |
 | `GET /archive?page=` | none | Past puzzles, with the caller's result if any |
+| `GET /internal/cleanup` | `Authorization: Bearer <CRON_SECRET>` | Runs the cleanup job (§10.3): `{sessions, guests, oauthStates, daysScheduled}`. The secret is compared in constant time by the contract validator; a missing or wrong one is a 401. |
 
 Every request is validated against the contract (unknown fields, lengths, patterns, enums) before a handler runs. A 429 carries `Retry-After`.
 
@@ -690,7 +707,8 @@ Two simultaneous guesses on one attempt are serialized by the row lock; an integ
   4. **Only `lichess_user_id` links accounts,** never a matching username: that would let anyone take over an account by naming their Lichess account after it. A new Lichess user whose name is taken gets `name-2` … `name-20`, then `name-` plus 6 random digits, so registering the numbered names can't lock a Lichess user out. Two simultaneous first sign-ins end in one account. The Lichess `username` must be 2–30 of `[A-Za-z0-9_-]` with `id` its lower-case form, and the profile link escapes the id.
   5. Every failure redirects to `/login?lichess=cancelled|expired|failed|busy`, which explains it. Failures on the server's side (database, Lichess errors) are logged as errors; the user's own (cancelled, expired, another browser's link) as information.
   6. Lichess shows the app by its callback address ("Allow http://localhost to access your account" in development). Users see and revoke authorized apps on `lichess.org/account/security`; with immediate revocation, Retrograde never appears there.
-- **Rate limits** (in-memory token buckets, injected rather than global): login and register 60 per minute per IP and 10 per minute per username (the per-username limit is what stops password guessing; per IP is generous because many real users share an IP behind carrier NAT or a campus network); guesses and hints 30 per minute per player; `/start` 300 per hour per IP; the Lichess start 60 per minute per IP. The client IP comes from `X-Forwarded-For` only behind a trusted proxy (§10.2).
+- **Rate limits** (in-memory token buckets, injected rather than global): login and register 60 per minute per IP and 10 per minute per username (the per-username limit is what stops password guessing; per IP is generous because many real users share an IP behind carrier NAT or a campus network); guesses and hints 30 per minute per player; `/start` 300 per hour per IP; the Lichess start 60 per minute per IP. The client IP comes from `CLIENT_IP_HEADER` on a platform that sets it, or from `X-Forwarded-For` only behind a trusted proxy (§10.2).
+- **Rate limits on Vercel.** Each instance keeps its own buckets in memory, and they reset when an idle instance is paused; under heavy load, N instances allow up to N times each limit. For a small site with usually one warm instance that's acceptable: the limits slow abuse down, but they aren't a security boundary. Password guessing is also bounded by argon2id's cost and the per-username limit, and Vercel's firewall can add a platform-wide rule on `/api/auth/` (docs/DEPLOY.md). Shared limits in the database are an idea for later (§12).
 
 ### 10.7 Leaderboards
 
@@ -698,7 +716,7 @@ Daily: solved, non-archive attempts for the puzzle, ordered per §8.5, top N plu
 
 ### 10.8 Observability
 
-`log/slog` JSON logs with request id, method, path, status and duration. No personal data beyond usernames, and never passwords, session tokens, OAuth codes, states, verifiers or tokens. `/api/health` pings the database with a short timeout.
+`log/slog` JSON logs with request id, method, path, status and duration. No personal data beyond usernames, and never IP addresses, passwords, session tokens, OAuth codes, states, verifiers or tokens (an integration test checks that a client's IP never reaches the logs). On Vercel the logs go to the platform's runtime logs, kept for an hour on the Hobby plan. `/api/health` pings the database with a short timeout.
 
 ---
 
@@ -707,10 +725,12 @@ Daily: solved, non-archive attempts for the puzzle, ordered per §8.5, top N plu
 ### 11.1 Security
 
 - Argon2id passwords, hashed session tokens, secure cookie flags, the origin check on state-changing requests, parameterized SQL only (sqlc), strict input validation from the contract, and a 16 KiB request body limit.
-- Security headers: a CSP with `default-src 'self'` and `img-src 'self' data:` (the board's piece images are inline SVG data URIs); the theme is set before first paint by a small external script, so no `'unsafe-inline'` is needed; `X-Content-Type-Options`, `Referrer-Policy`, `frame-ancestors 'none'`.
+- Security headers on every page: `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'` (the board's piece images are inline SVG data URIs; the theme is set before first paint by a small external script, so no `'unsafe-inline'` is needed anywhere), plus `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, a `Permissions-Policy` that turns off camera, microphone and location, and HSTS. `vercel.json` sets them on Vercel and `internal/webui` everywhere else; a Go test keeps the two lists identical, and `vite preview` sends them too, so the end-to-end suite runs under the production CSP and fails on any violation. API responses have their own strict headers (`default-src 'none'`, `no-store`).
 - Rate limits (§10.6); no secrets in logs.
 - **The daily solution never leaves the server** before the player's attempt is finished: no response type carries it until then, and an integration test checks every endpoint for it.
 - `return_to` and the sign-in page's `next` accept same-site paths only (no `//`, backslashes or control characters), so nothing can be used as an open redirect.
+- Unsafe production settings stop the server at startup (§10.2).
+- **Privacy** (`/privacy`): what is stored (username, password hash, game results, the Lichess id and name for Lichess users), the one session cookie (plus the short-lived Lichess sign-in cookie), browser storage that never leaves the browser, no analytics or third-party scripts, IP addresses never logged by the application, and the third parties: Vercel (hosting; its platform may keep request logs including IP addresses), Neon (the database) and Lichess (only for Sign in with Lichess).
 
 ### 11.2 Testing
 
@@ -729,8 +749,10 @@ The fast suites run on every commit (`pnpm check`, kept under about 90 seconds);
 On every push to `main` and every pull request:
 - **Ubuntu:** install with caches; lint, typecheck and fast tests for all TypeScript packages; `go vet`, golangci-lint and the Go tests (unit and integration) against a Postgres service container; a check that generated code is up to date (`pnpm gen` produces no diff); the web build; the Playwright end-to-end suite.
 - **Windows:** `pnpm install`, the TypeScript fast tests and the Go unit tests, so the scripts stay Windows-compatible.
+- **Container image:** builds the Dockerfile, applies migrations with the image, checks that unsafe production settings stop it, then serves and smoke-tests it (`scripts/smoke.mjs`: the page headers, client routes, `/api/health`, real database queries, and the cleanup endpoint refusing a request without the secret).
+- **Deployments**, only after all of the above pass: a pull request from this repository gets a Vercel preview, and a push to `main` goes to production. Each applies migrations first (to the preview's database branch or to production), then builds and deploys with the Vercel CLI, then smoke-tests the result. Vercel's own Git deployments are switched off, so nothing deploys without passing CI.
 
-The engine and generator slow suites run nightly.
+The engine and generator slow suites run nightly. A hand-started workflow (`puzzle-data.yml`) imports the puzzle pool into a hosted database and schedules the dailies.
 
 ### 11.4 Accessibility and performance
 
@@ -738,19 +760,26 @@ The engine and generator slow suites run nightly.
 - The main-thread JavaScript bundle stays small (about 119 KB gzipped); the engine worker loads separately (about 17 KB gzipped).
 - Visual direction: a "detective's casebook". Warm paper tones in light mode, deep ink in dark mode; Fraunces for headings, Inter for the interface, IBM Plex Mono for notation, all self-hosted (OFL). The theme follows the system setting or the header's toggle. The pieces are the cburnett set shipped with chessground (GPLv2+, compatible with the repository's license).
 
-### 11.5 Deployment (v1.0)
+### 11.5 Deployment
 
-A multi-stage `Dockerfile`: build the web app, copy it into the Go module, build the binary that embeds it, and run it in a minimal image as a non-root user with `HOST=0.0.0.0`. `retrograde migrate` runs as a release step before `serve`, which refuses to start on an unmigrated database (§10.1). `docs/DEPLOY.md` will describe one complete deployment, including importing puzzles and scheduling a year of dailies.
+Production runs on free plans: **Vercel** (Hobby) for the site and the API, **Neon** for PostgreSQL, both in Frankfurt. `docs/DEPLOY.md` has every step.
+
+- `vercel.json` defines two services in one project, so the site and the API share one domain (and so the session cookie, the origin check and Lichess's redirect work unchanged): `web`, the Vite build served from the CDN with the page headers and the client-route fallback, and `api`, the Go server built by Vercel's Go runtime from `cmd/server`. Requests under `/api/` go to the API, the rest to the web app. The full request path reaches the API.
+- The API connects through Neon's pooled connection (PgBouncer in transaction mode), which supports the protocol-level prepared statements pgx caches. Migrations, which need a session, use the direct connection, from the deploy job, before the new version is deployed. Migrations must therefore keep the previous version working (add, don't break), since it serves traffic while they run.
+- The **container image** (`Dockerfile`) is the portable alternative, for any container host or for Vercel's container runtime: the web app is built, copied into the Go module and embedded in the binary, which runs as a non-root user in a distroless image with `HOST=0.0.0.0`. `retrograde migrate` runs as a release step before `serve`. The image also carries the puzzle pool for `retrograde import-puzzles /data/puzzles-v1.jsonl`.
+- The schedule is loaded once by the puzzle-data workflow: the 500-puzzle pool covers a year from any launch weekday with about 135 puzzles to spare (a test checks it).
 
 ### 11.6 Releases
 
-Releases are version tags, `vX.Y.Z`. The 0.x releases built the product up piece by piece: foundations (0.1), engine core (0.2), retro analysis (0.3), the proof-game solver (0.4), the puzzle generator (0.5), the web shell and Lab (0.6), the API (0.7), the daily game, leaderboards, profiles and archive (0.8), and Sign in with Lichess (0.9). 1.0 is the polished, deployed version.
+Releases are version tags, `vX.Y.Z`. The 0.x releases built the product up piece by piece: foundations (0.1), engine core (0.2), retro analysis (0.3), the proof-game solver (0.4), the puzzle generator (0.5), the web shell and Lab (0.6), the API (0.7), the daily game, leaderboards, profiles and archive (0.8), and Sign in with Lichess (0.9). 1.0 is the deployed version, with the hosting, the privacy page and the documentation for running and deploying it.
 
 ---
 
 ## 12. Ideas for later
 
 - Linking a Lichess identity to an existing password account (a "link while signed in" flow). For now a Lichess sign-in always means the account with that Lichess id.
+- Self-service "delete my account" on the profile page. For now deletion is a request on GitHub.
+- Rate limits shared by every instance (in the database, or the platform's firewall for every route), so serverless scaling can't multiply them.
 - Stronger retro rules: parity (tempo) arguments, caged pieces (a bishop that can't have left its home square behind unmoved pawns), and capture accounting that includes promoted pawns and the colours of captured bishops.
 - A story campaign of detective cases; a composer mode built on the uniqueness checker; head-to-head races; partial retrograde analysis puzzles; fairy-chess proof games.
 - Puzzle ratings with Glicko-2 from solve results.

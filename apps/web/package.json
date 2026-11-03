@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:e2e": "playwright test --project=e2e",
-    "shots": "playwright test --project=shots --workers=2"
+    "shots": "playwright test --project=shots --workers=2",
+    "gifs": "playwright test --project=gifs --workers=1"
   },
   "dependencies": {
     "@fontsource-variable/fraunces": "5.3.0",
@@ -35,10 +36,13 @@
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.3",
     "@types/node": "26.6.5",
+    "@types/pngjs": "6.0.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
+    "gifenc": "1.0.3",
     "jsdom": "30.1.3",
+    "pngjs": "7.0.0",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
     "vite": "8.3.4",
