@@ -100,6 +100,136 @@ jobs:
       - run: pnpm test
       - run: go -C services/api test ./...
 
+  docker:
+    name: Container image (build, migrate, refuse unsafe settings, smoke test)
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.4
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: retrograde
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d retrograde"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/retrograde?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - run: docker build --tag retrograde:ci .
+      - name: Apply migrations with the image
+        run: docker run --rm --network host -e DATABASE_URL retrograde:ci migrate
+      - name: Unsafe production settings are refused
+        run: |
+          if docker run --rm --network host -e DATABASE_URL -e APP_ENV=production retrograde:ci 2> refused.txt; then
+            echo "the server started with unsafe production settings"; exit 1
+          fi
+          cat refused.txt
+          grep -q COOKIE_SECURE refused.txt
+      - name: Serve the API and the web app, then smoke-test them
+        run: |
+          docker run --detach --name retrograde --network host -e DATABASE_URL -e BASE_URL=http://localhost:8080 retrograde:ci
+          node scripts/smoke.mjs http://localhost:8080
+      - name: Container logs
+        if: always()
+        run: docker logs retrograde || true
+
+  # Deployments run only after every check above has passed (docs/DEPLOY.md). Pull requests from
+  # this repository get a preview; main goes to production (on a push, or a manual run of this
+  # workflow on main). Both are skipped until the PRODUCTION_URL repository variable exists, the last
+  # step of the setup in docs/DEPLOY.md. Migrations run first, against the
+  # direct (unpooled) database connection, so the new version never serves an older schema.
+  deploy-preview:
+    name: Deploy a preview
+    needs: [ubuntu, windows, docker]
+    if: vars.PRODUCTION_URL != '' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment:
+      name: preview
+      url: ${{ steps.deploy.outputs.url }}
+    concurrency:
+      group: deploy-preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: services/api/go.mod
+          cache-dependency-path: services/api/go.sum
+      - run: npm install --global vercel@65.0.0
+      - name: Apply migrations to the preview database
+        run: go -C services/api run ./cmd/retrograde migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_DIRECT }}
+      - run: vercel pull --yes --environment=preview --token="$VERCEL_TOKEN"
+      - run: vercel build --token="$VERCEL_TOKEN"
+      - id: deploy
+        run: |
+          url=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+      - name: Smoke-test the preview
+        run: node scripts/smoke.mjs "$URL"
+        env:
+          URL: ${{ steps.deploy.outputs.url }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+  deploy-production:
+    name: Deploy to production
+    needs: [ubuntu, windows, docker]
+    if: vars.PRODUCTION_URL != '' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PRODUCTION_URL }}
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: services/api/go.mod
+          cache-dependency-path: services/api/go.sum
+      - run: npm install --global vercel@65.0.0
+      - name: Apply migrations before the new version serves traffic
+        run: go -C services/api run ./cmd/retrograde migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL_DIRECT }}
+      - run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+      - run: vercel build --prod --token="$VERCEL_TOKEN"
+      - run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
+      - name: Smoke-test production
+        run: node scripts/smoke.mjs "$URL"
+        env:
+          URL: ${{ vars.PRODUCTION_URL }}
+
   nightly:
     name: Nightly slow tests
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

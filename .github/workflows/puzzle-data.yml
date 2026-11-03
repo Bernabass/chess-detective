@@ -1,0 +1,42 @@
+# Loads the puzzle pool into a hosted database and schedules the dailies (docs/DEPLOY.md). Run it
+# by hand from the Actions tab: once before launch, and again whenever the schedule runs low.
+# Every step is idempotent, so running it twice changes nothing.
+name: Puzzle data
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Which database
+        type: choice
+        options: [production, preview]
+        default: production
+      days:
+        description: Days to schedule, starting at the environment's LAUNCH_DATE
+        default: '365'
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    name: Import and schedule puzzles
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.target }}
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL_DIRECT }}
+      LAUNCH_DATE: ${{ vars.LAUNCH_DATE }}
+      DAYS: ${{ inputs.days }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: services/api/go.mod
+          cache-dependency-path: services/api/go.sum
+      - name: Check the settings
+        run: |
+          test -n "$DATABASE_URL" || { echo "The environment has no DATABASE_URL_DIRECT secret"; exit 1; }
+          test -n "$LAUNCH_DATE" || { echo "The environment has no LAUNCH_DATE variable"; exit 1; }
+      - run: go -C services/api run ./cmd/retrograde migrate
+      - run: go -C services/api run ./cmd/retrograde import-puzzles "$GITHUB_WORKSPACE/data/puzzles-v1.jsonl"
+      - run: go -C services/api run ./cmd/retrograde schedule --from "$LAUNCH_DATE" --days "$DAYS"
