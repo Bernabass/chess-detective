@@ -15,17 +15,18 @@ You need three accounts: GitHub (already there), Neon and Vercel. Neither Neon n
 
 ### 1. Neon: the database
 
-1. Go to [neon.com](https://neon.com) → **Sign up** → **Continue with GitHub**.
+1. Go to [neon.com](https://neon.com) → **Sign up** → **Continue with GitHub**. Skip the optional onboarding offers (the CLI setup and the like); nothing here needs them.
 2. **Create a project**:
    - **Project name:** `retrograde`.
    - **Postgres version:** 18 (or the newest offered; 17 also works).
    - **Cloud provider:** AWS.
    - **Region:** Europe Central 1 (Frankfurt).
-3. Keep the free compute within budget. Open **Branches** → `main` → **Computes** → **Edit**, and set both minimum and maximum to **0.25 CU**. Scale to zero after 5 minutes stays on. The free plan's 100 compute-hours a month then go a long way: the database sleeps when nobody plays and wakes in well under a second.
-4. Copy the production connection strings. On the project dashboard, click **Connect** (branch `main`, database `neondb`, role `neondb_owner`):
+   The project's default branch is called `production`.
+3. Keep the free compute within budget. Open **Branches** → `production` → **Computes** → **Edit**, and set both minimum and maximum to **0.25 CU**. Scale to zero after 5 minutes stays on. The free plan's 100 compute-hours a month then go a long way: the database sleeps when nobody plays and wakes in well under a second.
+4. Copy the production connection strings. On the project dashboard, click **Connect** (branch `production`, database `neondb`, role `neondb_owner`):
    - with **Connection pooling** on: the **pooled** string, whose host contains `-pooler`. This is Vercel's `DATABASE_URL` for production.
    - with it off: the **direct** string. This is GitHub's `DATABASE_URL_DIRECT` for production; migrations need a direct connection.
-5. Create the preview database. Go to **Branches** → **New branch**: name `preview`, parent `main`. Do this before launch, while `main` holds no players: a branch starts as a copy of its parent's data. Click **Connect** again with branch `preview` and copy its pooled and direct strings too.
+5. Create the preview database. Go to **Branches** → **New branch**: name `preview`, parent `production`, and set **Auto-delete** to **Never** (it lives as long as the project). Do this before launch, while `production` holds no players: a branch starts as a copy of its parent's data. Click **Connect** again with branch `preview` and copy its pooled and direct strings too.
 
 Use the strings as Neon gives them (`sslmode=require` and `channel_binding=require` are fine). Don't add `pool_*` parameters: the API's startup migration check would pass them to the server, which rejects them.
 
@@ -37,18 +38,18 @@ Use the strings as Neon gives them (`sslmode=require` and `channel_binding=requi
    - **Project Name:** `retrograde-chess`. This gives the address `retrograde-chess.vercel.app`.
    - **Framework Preset:** **Services**, which reads `vercel.json`. If it isn't offered, choose **Other**.
    - **Root Directory:** `./`.
-   - Open **Environment Variables** and add the production values from step 6.
-   - Click **Deploy**. This first deployment is the only one made from Vercel's side; after it, `vercel.json` turns Vercel's own Git deployments off. Its API refuses to start until the database is migrated (its log says so): that's expected until you've run the **Launch** steps below.
+   - Click **Deploy**, without adding environment variables here (step 6 adds them per environment). This first deployment is the only one made from Vercel's side; after it, `vercel.json` turns Vercel's own Git deployments off. Its API refuses to start (its log says why): that's expected until the variables are set and you've run the **Launch** steps below.
 4. **Settings → Build and Deployment → Node.js Version:** 24.x.
 5. **Settings → Functions → Function Region:** Frankfurt, Germany (fra1). Leave Fluid compute on.
-6. **Settings → Environment Variables.** Don't set `PORT` (Vercel provides it) or `HOST` (on Vercel it defaults to `0.0.0.0`).
+   Settings changed from here on (steps 4–7) need no redeploy now: the first deploy from GitHub Actions picks them up.
+6. **Settings → Environments → Production**, then **→ Preview**: add each environment's variables there, scoped to that one environment. Vercel stores them as **Sensitive**, so their values can't be read back later, not even by `vercel pull`. That's fine: the API reads them at runtime on Vercel, and nothing in the build needs them. Don't set `PORT` (Vercel provides it) or `HOST` (on Vercel it defaults to `0.0.0.0`).
 
    | Name | Production | Preview |
    |---|---|---|
-   | `DATABASE_URL` | Neon `main`, pooled | Neon `preview`, pooled |
+   | `DATABASE_URL` | Neon `production`, pooled | Neon `preview`, pooled |
    | `BASE_URL` | `https://retrograde-chess.vercel.app` | leave unset (each preview uses its own deployment address) |
    | `COOKIE_SECURE` | `true` | `true` |
-   | `LAUNCH_DATE` | the launch day, e.g. `2026-11-10` | 14 days before you first load the preview data, so previews have an archive |
+   | `LAUNCH_DATE` | the launch day, e.g. `2026-11-03` | about two weeks earlier, e.g. `2026-10-20`, so previews have an archive |
    | `CRON_SECRET` | a new random secret (below) | another random secret |
    | `CLIENT_IP_HEADER` | `X-Real-IP` | `X-Real-IP` |
    | `LOG_LEVEL` | `info` | `info` |
@@ -62,12 +63,12 @@ Use the strings as Neon gives them (`sslmode=require` and `channel_binding=requi
    Each value matters: the API refuses to start on Vercel with an unsafe or missing setting, and its log says which one.
 7. **Settings → Deployment Protection:**
    - Leave **Vercel Authentication** on for previews (Standard Protection), so only you can open them.
-   - Under **Protection Bypass for Automation**, click **Add** and copy the secret. GitHub uses it to smoke-test previews.
-8. **Account → Settings → Tokens:** create a token named `github-actions`, scoped to your Hobby team, expiring in a year. Copy it.
+   - Under **Protection Bypass for Automation**, click **Add**. Vercel generates the secret and lists it as the system environment variable `VERCEL_AUTOMATION_BYPASS_SECRET`; copy its value. GitHub uses it to smoke-test previews.
+8. **Account → Settings → Tokens:** create a token named `github-actions` with scope **All Projects** on your Hobby team, expiring in a year. Copy it, and note the expiry date: deploys stop when it expires, until you put a new token in GitHub.
 9. Copy two IDs:
    - **Settings → General → Project ID** of the project;
    - **Settings → General → Team ID** of your Hobby team (the team, not the project).
-10. Optional, if your plan shows it: **Firewall → Configure → New Rule**. Name it "Sign-in rate limit": if **Request Path** starts with `/api/auth/`, then **Rate Limit**, fixed window, 60 seconds, 30 requests, keyed by IP. Then **Save** and **Publish**. Unlike the API's own limits, the firewall's apply across all instances ([ARCHITECTURE.md §10.6](ARCHITECTURE.md)).
+10. Optional (it can wait), if your plan shows it: **Firewall → Configure → New Rule**. Name it "Sign-in rate limit": if **Request Path** starts with `/api/auth/`, then **Rate Limit**, fixed window, 60 seconds, 30 requests, keyed by IP. Then **Save** and **Publish**. Unlike the API's own limits, the firewall's apply across all instances ([ARCHITECTURE.md §10.6](ARCHITECTURE.md)).
 
 ### 3. GitHub: secrets and environments
 
@@ -76,7 +77,7 @@ In the repository, open **Settings**.
 1. **Secrets and variables → Actions → Repository secrets:** `VERCEL_TOKEN` (step 2.8), `VERCEL_ORG_ID` (the Team ID), `VERCEL_PROJECT_ID` (the Project ID).
 2. **Environments → New environment → `production`:**
    - **Deployment branches and tags:** Selected branches → add `main`.
-   - **Environment secret:** `DATABASE_URL_DIRECT` = Neon `main`, direct.
+   - **Environment secret:** `DATABASE_URL_DIRECT` = Neon `production`, direct.
    - **Environment variable:** `LAUNCH_DATE` = the same launch day as on Vercel.
 3. **Environments → New environment → `preview`:**
    - **Environment secrets:** `DATABASE_URL_DIRECT` = Neon `preview`, direct; `VERCEL_AUTOMATION_BYPASS_SECRET` (step 2.7).
