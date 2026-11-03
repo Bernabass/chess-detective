@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -34,6 +35,26 @@ type Config struct {
 	// LichessClientID identifies this app to Lichess (no registration; any unique id).
 	// Defaults to BASE_URL's host.
 	LichessClientID string
+
+	// Production is APP_ENV=production, or running on Vercel: serve then refuses unsafe
+	// settings (ProductionProblems).
+	Production bool
+	// OnVercel is VERCEL=1, set by the platform.
+	OnVercel bool
+	// LaunchDateSet is whether LAUNCH_DATE was given rather than defaulted.
+	LaunchDateSet bool
+	// ExtraOrigins are other origins of this same deployment accepted by the CSRF check, such as
+	// a Vercel deployment's own address next to its branch or production address.
+	ExtraOrigins []string
+	// CronSecret authorizes GET /api/internal/cleanup (Vercel sends it as a bearer token).
+	// Empty disables the endpoint.
+	CronSecret string
+	// ClientIPHeader names a header the platform sets to the client's IP and that clients can't
+	// forge (Vercel: X-Real-IP). Empty: the TCP peer, or X-Forwarded-For from TrustedProxies.
+	ClientIPHeader string
+	// CleanupInProcess runs the cleanup job inside serve every hour. Off on Vercel, where
+	// instances pause between requests and a daily cron calls the cleanup endpoint instead.
+	CleanupInProcess bool
 }
 
 // maxRateLimitScale keeps the multiplied limits far from integer overflow.
@@ -62,10 +83,27 @@ func Load(lookup Lookup) (Config, error) {
 	}
 
 	var errs []error
-	cfg := Config{
-		DatabaseURL: get("DATABASE_URL", ""),
-		Host:        get("HOST", "127.0.0.1"),
+	onVercel := get("VERCEL", "") == "1"
+	defaultHost := "127.0.0.1"
+	if onVercel {
+		defaultHost = "0.0.0.0" // the platform proxies to the server
 	}
+	cfg := Config{
+		DatabaseURL:      get("DATABASE_URL", ""),
+		Host:             get("HOST", defaultHost),
+		OnVercel:         onVercel,
+		CleanupInProcess: !onVercel,
+		CronSecret:       get("CRON_SECRET", ""),
+	}
+
+	switch strings.ToLower(get("APP_ENV", "development")) {
+	case "production":
+		cfg.Production = true
+	case "development":
+	default:
+		errs = append(errs, fmt.Errorf("APP_ENV must be development or production, got %q", get("APP_ENV", "")))
+	}
+	cfg.Production = cfg.Production || onVercel
 
 	if cfg.DatabaseURL == "" {
 		errs = append(errs, ErrMissingDatabaseURL)
@@ -77,11 +115,17 @@ func Load(lookup Lookup) (Config, error) {
 	}
 	cfg.Port = port
 
-	baseURL, err := url.Parse(get("BASE_URL", "http://localhost:5173"))
+	defaultBase, extraHosts := vercelAddresses(get)
+	baseURL, err := url.Parse(get("BASE_URL", defaultBase))
 	if err != nil || (baseURL.Scheme != "http" && baseURL.Scheme != "https") || baseURL.Host == "" {
 		errs = append(errs, fmt.Errorf("BASE_URL must be an absolute http(s) URL, got %q", get("BASE_URL", "")))
 	}
 	cfg.BaseURL = baseURL
+	for _, host := range extraHosts {
+		if baseURL == nil || !strings.EqualFold(host, baseURL.Host) {
+			cfg.ExtraOrigins = append(cfg.ExtraOrigins, "https://"+strings.ToLower(host))
+		}
+	}
 
 	if err := cfg.LogLevel.UnmarshalText([]byte(get("LOG_LEVEL", "info"))); err != nil {
 		errs = append(errs, fmt.Errorf("LOG_LEVEL must be debug, info, warn or error, got %q", get("LOG_LEVEL", "")))
@@ -92,6 +136,7 @@ func Load(lookup Lookup) (Config, error) {
 		errs = append(errs, fmt.Errorf("LAUNCH_DATE must be a date like 2026-11-01, got %q", get("LAUNCH_DATE", "")))
 	}
 	cfg.LaunchDate = launch
+	cfg.LaunchDateSet = get("LAUNCH_DATE", "") != ""
 
 	switch strings.ToLower(get("COOKIE_SECURE", "false")) {
 	case "true", "1", "yes":
@@ -123,10 +168,58 @@ func Load(lookup Lookup) (Config, error) {
 	}
 	cfg.TrustedProxies = proxies
 
+	if header := get("CLIENT_IP_HEADER", ""); header != "" {
+		if !isToken(header) {
+			errs = append(errs, fmt.Errorf("CLIENT_IP_HEADER must be a header name like X-Real-IP, got %q", header))
+		}
+		if len(proxies) > 0 {
+			errs = append(errs, errors.New("set either CLIENT_IP_HEADER or TRUSTED_PROXIES, not both"))
+		}
+		cfg.ClientIPHeader = textproto.CanonicalMIMEHeaderKey(header)
+	}
+
 	if len(errs) > 0 {
 		return Config{}, errors.Join(errs...)
 	}
 	return cfg, nil
+}
+
+// vercelAddresses is the default BASE_URL on Vercel (the production domain in production, the
+// deployment's own address otherwise: unique to that deployment, unlike a branch alias that a
+// later deployment can take over) and the deployment's other addresses, which the CSRF check also
+// accepts. Off Vercel: the development address and nothing else.
+func vercelAddresses(get func(key, fallback string) string) (string, []string) {
+	if get("VERCEL", "") != "1" {
+		return "http://localhost:5173", nil
+	}
+	deployment, branch, prod := get("VERCEL_URL", ""), get("VERCEL_BRANCH_URL", ""), get("VERCEL_PROJECT_PRODUCTION_URL", "")
+	primary := deployment
+	if get("VERCEL_ENV", "") == "production" && prod != "" {
+		primary = prod
+	}
+	if primary == "" {
+		return "http://localhost:5173", nil
+	}
+	var extra []string
+	for _, h := range []string{deployment, branch} {
+		if h != "" && h != primary {
+			extra = append(extra, h)
+		}
+	}
+	return "https://" + primary, extra
+}
+
+// isToken reports whether s is a valid HTTP header name (an RFC 9110 token).
+func isToken(s string) bool {
+	tokenChar := func(r rune) bool {
+		return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", r)
+	}
+	for _, r := range s {
+		if !tokenChar(r) {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // parseProxies reads a comma-separated list of IPs and CIDRs.

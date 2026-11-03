@@ -22,6 +22,18 @@ func (q *Queries) CountArchive(ctx context.Context, today time.Time) (int32, err
 	return total, err
 }
 
+const countScheduledFrom = `-- name: CountScheduledFrom :one
+SELECT count(*) FROM daily_schedule WHERE day >= $1
+`
+
+// Days from $1 on that have a puzzle (the cleanup job warns when fewer than 30 remain).
+func (q *Queries) CountScheduledFrom(ctx context.Context, day time.Time) (int64, error) {
+	row := q.db.QueryRow(ctx, countScheduledFrom, day)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countUnscheduledByDifficulty = `-- name: CountUnscheduledByDifficulty :many
 SELECT p.difficulty, count(*)::int AS remaining
 FROM puzzles p

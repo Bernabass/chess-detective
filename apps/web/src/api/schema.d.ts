@@ -354,10 +354,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run the cleanup job
+         * @description Deletes expired sessions and OAuth states, and guest players older than 30 days with no
+         *     guesses, then reports how many days of puzzles are still scheduled. Called once a day
+         *     by the hosting platform's cron with `Authorization: Bearer <CRON_SECRET>`; rejected
+         *     without that secret, and always rejected when CRON_SECRET isn't set. Safe to repeat.
+         */
+        get: operations["runCleanup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        CleanupReport: {
+            /**
+             * Format: int64
+             * @description Expired sessions deleted.
+             */
+            sessions: number;
+            /**
+             * Format: int64
+             * @description Idle guest players deleted.
+             */
+            guests: number;
+            /**
+             * Format: int64
+             * @description Expired Lichess sign-in states deleted.
+             */
+            oauthStates: number;
+            /** @description Days from today (UTC) that have a scheduled puzzle. */
+            daysScheduled: number;
+        };
         Health: {
             /** @enum {string} */
             status: "ok" | "unavailable";
@@ -965,6 +1007,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Archive"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    runCleanup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The cleanup ran. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CleanupReport"];
                 };
             };
             default: components["responses"]["Problem"];

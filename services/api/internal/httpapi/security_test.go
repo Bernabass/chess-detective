@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
@@ -33,10 +34,67 @@ func TestClientIP(t *testing.T) {
 			for _, v := range c.xff {
 				r.Header.Add("X-Forwarded-For", v)
 			}
-			if got := clientIP(r, c.trusted); got.String() != c.want {
+			if got := clientIP(r, c.trusted, ""); got.String() != c.want {
 				t.Errorf("clientIP = %s, want %s", got, c.want)
 			}
 		})
+	}
+}
+
+// On a platform that overwrites a client-IP header (Vercel's X-Real-IP), that header is the
+// client and nothing the client sends can change it.
+func TestClientIPFromPlatformHeader(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		xff    string
+		want   string
+	}{
+		{"the header", "198.51.100.9", "", "198.51.100.9"},
+		{"a forged X-Forwarded-For is ignored", "198.51.100.9", "1.2.3.4", "198.51.100.9"},
+		{"the first entry of a list", "198.51.100.9, 10.0.0.1", "", "198.51.100.9"},
+		{"spaces", "  2001:db8::5 ", "", "2001:db8::5"},
+		{"IPv4-mapped", "::ffff:198.51.100.9", "", "198.51.100.9"},
+		{"missing header: the peer", "", "1.2.3.4", "10.9.8.7"},
+		{"malformed header: the peer", "not-an-ip", "", "10.9.8.7"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := httptest.NewRequestWithContext(t.Context(), "GET", "/api/daily", nil)
+			r.RemoteAddr = "10.9.8.7:5000"
+			if c.header != "" {
+				r.Header.Set("X-Real-Ip", c.header)
+			}
+			if c.xff != "" {
+				r.Header.Set("X-Forwarded-For", c.xff)
+			}
+			if got := clientIP(r, nil, "X-Real-Ip"); got.String() != c.want {
+				t.Errorf("clientIP = %s, want %s", got, c.want)
+			}
+		})
+	}
+}
+
+// A deployment's other addresses (a Vercel preview's deployment URL) are accepted origins too.
+func TestCSRFCheckAcceptsEveryOriginOfThisDeployment(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	h := withCSRFCheck(mustURL(t, "https://retrograde-chess-git-x.vercel.app"), []string{"https://retrograde-chess-abc.vercel.app"}, ok)
+	for origin, want := range map[string]int{
+		"https://retrograde-chess-git-x.vercel.app": http.StatusNoContent,
+		"https://retrograde-chess-abc.vercel.app":   http.StatusNoContent,
+		"https://evil.example":                      http.StatusForbidden,
+		"":                                          http.StatusForbidden,
+	} {
+		r := httptest.NewRequestWithContext(t.Context(), "POST", "/api/auth/logout", nil)
+		r.Header.Set("Content-Type", "application/json")
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Errorf("Origin %q: status %d, want %d", origin, w.Code, want)
+		}
 	}
 }
 

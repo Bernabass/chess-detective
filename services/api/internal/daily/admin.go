@@ -194,6 +194,15 @@ func Schedule(ctx context.Context, st *store.Store, launch, from time.Time, days
 	return report, countErr
 }
 
+// ScheduledDays counts the days from today (UTC) on that have a scheduled puzzle.
+func ScheduledDays(ctx context.Context, st *store.Store, today time.Time) (int, error) {
+	n, err := st.Queries().CountScheduledFrom(ctx, today)
+	if err != nil {
+		return 0, fmt.Errorf("counting scheduled days: %w", err)
+	}
+	return int(n), nil
+}
+
 // RemainingPool counts unscheduled puzzles per difficulty (index 1..5).
 func RemainingPool(ctx context.Context, st *store.Store) ([6]int, error) {
 	var out [6]int

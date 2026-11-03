@@ -10,7 +10,7 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "dev": "concurrently --kill-others --names api,web --prefix-colors blue,green \"go -C services/api run ./cmd/retrograde serve\" \"pnpm --filter @retrograde/web dev\"",
+    "dev": "pnpm run db:migrate && concurrently --kill-others --names api,web --prefix-colors blue,green \"go -C services/api run ./cmd/retrograde serve\" \"pnpm --filter @retrograde/web dev\"",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run check:go",
     "lint": "eslint . --cache --cache-location node_modules/.cache/eslint/ && prettier --check . --cache --cache-location node_modules/.cache/prettier/.prettiercache",
     "format": "prettier --write .",
@@ -25,7 +25,8 @@
     "try:api": "node scripts/try-api.mjs",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
-    "build": "pnpm --filter @retrograde/web build && go -C services/api build -o bin/ ./cmd/retrograde"
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/start.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -85,6 +85,15 @@ func (b *syncBuffer) String() string {
 // of puzzle #3. limits builds the rate limiters on the test clock; nil means no limits.
 func newAPI(t *testing.T, limits func(clock.Clock) httpapi.Limits) *testAPI {
 	t.Helper()
+	return newAPIWith(t, limits, nil)
+}
+
+// testCronSecret is the CRON_SECRET of every test API.
+const testCronSecret = "test-cron-secret-0123456789abcdef"
+
+// newAPIWith is newAPI with a hook that can change the handler's options before it's built.
+func newAPIWith(t *testing.T, limits func(clock.Clock) httpapi.Limits, configure func(*httpapi.Options)) *testAPI {
+	t.Helper()
 	st, db := dbtest.Store(t)
 	clk := clock.NewFake(launch.AddDate(0, 0, 2).Add(12 * time.Hour))
 	api := &testAPI{t: t, st: st, db: db, clock: clk}
@@ -126,7 +135,7 @@ func newAPI(t *testing.T, limits func(clock.Clock) httpapi.Limits) *testAPI {
 		Lichess: &lichess.Client{BaseURL: lichessURL, ClientID: "localhost:5173", HTTP: api.lichess.srv.Client()},
 		Logger:  logger,
 	}
-	handler := httpapi.NewHandler(httpapi.Options{
+	opts := httpapi.Options{
 		Logger:      logger,
 		DB:          st,
 		Clock:       clk,
@@ -135,7 +144,12 @@ func newAPI(t *testing.T, limits func(clock.Clock) httpapi.Limits) *testAPI {
 		Leaderboard: &leaderboard.Service{Store: st, Clock: clk, Puzzles: dailySvc},
 		Limits:      lim,
 		BaseURL:     base,
-	})
+		CronSecret:  testCronSecret,
+	}
+	if configure != nil {
+		configure(&opts)
+	}
+	handler := httpapi.NewHandler(opts)
 	api.srv = httptest.NewServer(handler)
 	t.Cleanup(api.srv.Close)
 	authSvc.LichessCallback = api.srv.URL + "/api/auth/lichess/callback"

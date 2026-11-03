@@ -63,6 +63,12 @@ type Options struct {
 	BaseURL        *url.URL
 	CookieSecure   bool
 	TrustedProxies []netip.Prefix
+	// ExtraOrigins are this deployment's other addresses, also accepted by the CSRF check.
+	ExtraOrigins []string
+	// ClientIPHeader, if set, is the platform's client-IP header (see clientIP).
+	ClientIPHeader string
+	// CronSecret authorizes GET /api/internal/cleanup; empty disables it.
+	CronSecret string
 }
 
 // Server implements the generated StrictServerInterface.
@@ -77,6 +83,7 @@ type Server struct {
 	limits         Limits
 	cookieSecure   bool
 	trustedProxies []netip.Prefix
+	clientIPHeader string
 }
 
 var _ StrictServerInterface = (*Server)(nil)
@@ -104,9 +111,10 @@ func NewHandler(opts Options) http.Handler {
 		limits:         opts.Limits,
 		cookieSecure:   opts.CookieSecure,
 		trustedProxies: opts.TrustedProxies,
+		clientIPHeader: opts.ClientIPHeader,
 	}
 
-	validator, err := newRequestValidator()
+	validator, err := newRequestValidator(opts.CronSecret)
 	if err != nil {
 		panic(err) // the embedded spec is generated from api/openapi.yaml; failing here is a build bug
 	}
@@ -127,7 +135,7 @@ func NewHandler(opts Options) http.Handler {
 		// Per matched route, so unknown paths and methods keep ServeMux's 404 and 405. The last
 		// middleware runs first: the CSRF check, then the contract validator.
 		Middlewares: []MiddlewareFunc{validator, func(next http.Handler) http.Handler {
-			return withCSRFCheck(opts.BaseURL, next)
+			return withCSRFCheck(opts.BaseURL, opts.ExtraOrigins, next)
 		}},
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			if r.URL.Path == "/api/auth/lichess/callback" { // a browser navigation, not an API call

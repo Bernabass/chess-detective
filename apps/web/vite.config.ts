@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
@@ -5,6 +6,25 @@ import { loadEnv } from 'vite';
 import { defineConfig } from 'vitest/config';
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
+
+interface HeaderRule {
+  source: string;
+  headers: { key: string; value: string }[];
+}
+
+/**
+ * The web app's security headers in production, from vercel.json (the Go server sends the same
+ * ones). `vite preview` sends them too, so the end-to-end tests run under the production CSP.
+ */
+function productionHeaders(): Record<string, string> {
+  const config = JSON.parse(
+    readFileSync(new URL('../../vercel.json', import.meta.url), 'utf8'),
+  ) as {
+    services: { web: { headers: HeaderRule[] } };
+  };
+  const rule = config.services.web.headers.find((r) => r.source === '/(.*)');
+  return Object.fromEntries((rule?.headers ?? []).map((h) => [h.key, h.value]));
+}
 
 export default defineConfig(({ mode }) => {
   // The repo-root .env holds PORT for the Go API; real environment variables win.
@@ -26,6 +46,7 @@ export default defineConfig(({ mode }) => {
     preview: {
       port: 4173,
       strictPort: true,
+      headers: productionHeaders(),
       // e2e runs use their own API (scripts/e2e-api.mjs) on E2E_API_PORT.
       proxy:
         env.E2E === '1' ? { '/api': `http://127.0.0.1:${env.E2E_API_PORT ?? '8092'}` } : apiProxy,

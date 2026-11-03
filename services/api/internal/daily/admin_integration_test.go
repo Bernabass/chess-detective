@@ -161,3 +161,35 @@ func TestSchedule(t *testing.T) {
 		t.Fatalf("%d days scheduled after a failed run (%v), want 21", days, err)
 	}
 }
+
+// The committed pool fills a whole year of dailies from any launch weekday, which production
+// relies on: a year needs about 53 puzzles each of ★, ★★★★ and ★★★★★ and 105 each of ★★ and ★★★.
+func TestThePoolFillsAYearFromAnyWeekday(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(poolFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for weekday := range 7 {
+		start := launch.AddDate(0, 0, weekday)
+		t.Run(start.Weekday().String(), func(t *testing.T) {
+			t.Parallel()
+			st, _ := dbtest.Store(t)
+			if _, err := daily.ImportPuzzles(t.Context(), st, strings.NewReader(string(raw))); err != nil {
+				t.Fatal(err)
+			}
+			r, err := daily.Schedule(t.Context(), st, start, start, 365)
+			if err != nil {
+				t.Fatalf("scheduling a year from %s: %v (left: %v)", start.Format(time.DateOnly), err, r.Remaining)
+			}
+			if r.Assigned != 365 {
+				t.Fatalf("assigned %d days, want 365", r.Assigned)
+			}
+			days, err := daily.ScheduledDays(t.Context(), st, start)
+			if err != nil || days != 365 {
+				t.Fatalf("ScheduledDays = %d (%v), want 365", days, err)
+			}
+			t.Logf("left after a year: %v", r.Remaining[1:])
+		})
+	}
+}

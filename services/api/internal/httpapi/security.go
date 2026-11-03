@@ -35,8 +35,11 @@ func withBodyLimit(next http.Handler) http.Handler {
 
 // withCSRFCheck rejects state-changing requests that don't send JSON from our own origin
 // (ARCHITECTURE.md §10.6). Together with SameSite=Lax cookies this stops cross-site forms and fetches.
-func withCSRFCheck(baseURL *url.URL, next http.Handler) http.Handler {
-	origin := originOf(baseURL)
+func withCSRFCheck(baseURL *url.URL, extraOrigins []string, next http.Handler) http.Handler {
+	allowed := map[string]bool{originOf(baseURL): true}
+	for _, o := range extraOrigins {
+		allowed[o] = true
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
@@ -48,7 +51,7 @@ func withCSRFCheck(baseURL *url.URL, next http.Handler) http.Handler {
 			writeProblem(w, http.StatusUnsupportedMediaType, "State-changing requests must send Content-Type: application/json.")
 			return
 		}
-		if r.Header.Get("Origin") != origin {
+		if !allowed[r.Header.Get("Origin")] {
 			writeProblem(w, http.StatusForbidden, "The request's Origin header must be this site's address.")
 			return
 		}
@@ -70,9 +73,17 @@ func originOf(u *url.URL) string {
 	return scheme + "://" + host
 }
 
-// clientIP is the TCP peer, or the right-most X-Forwarded-For address that isn't a trusted
-// proxy when the peer itself is one (ARCHITECTURE.md §10.2).
-func clientIP(r *http.Request, trusted []netip.Prefix) netip.Addr {
+// clientIP is the client's address (ARCHITECTURE.md §10.2): with header set, that header,
+// which the platform overwrites so clients can't forge it (Vercel's X-Real-IP); otherwise the
+// TCP peer, or the right-most X-Forwarded-For address that isn't a trusted proxy when the peer
+// itself is one.
+func clientIP(r *http.Request, trusted []netip.Prefix, header string) netip.Addr {
+	if header != "" {
+		first, _, _ := strings.Cut(r.Header.Get(header), ",")
+		if addr, err := netip.ParseAddr(strings.TrimSpace(first)); err == nil {
+			return addr.Unmap()
+		}
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr

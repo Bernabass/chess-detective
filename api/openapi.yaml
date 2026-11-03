@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Retrograde API
-  version: 0.2.0
+  version: 0.3.0
   description: |
     API for Retrograde, chess detective puzzles built on retrograde analysis.
     This file is the contract: `pnpm gen` generates the Go server interface and the
@@ -446,7 +446,35 @@ paths:
         default:
           $ref: '#/components/responses/Problem'
 
+  /internal/cleanup:
+    get:
+      operationId: runCleanup
+      summary: Run the cleanup job
+      description: |
+        Deletes expired sessions and OAuth states, and guest players older than 30 days with no
+        guesses, then reports how many days of puzzles are still scheduled. Called once a day
+        by the hosting platform's cron with `Authorization: Bearer <CRON_SECRET>`; rejected
+        without that secret, and always rejected when CRON_SECRET isn't set. Safe to repeat.
+      tags: [system]
+      security:
+        - cronSecret: []
+      responses:
+        '200':
+          description: The cleanup ran.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CleanupReport'
+        default:
+          $ref: '#/components/responses/Problem'
+
 components:
+  securitySchemes:
+    cronSecret:
+      type: http
+      scheme: bearer
+      description: The CRON_SECRET setting, sent by the platform's cron job.
+
   parameters:
     Number:
       name: number
@@ -467,6 +495,27 @@ components:
             $ref: '#/components/schemas/Problem'
 
   schemas:
+    CleanupReport:
+      type: object
+      additionalProperties: false
+      required: [sessions, guests, oauthStates, daysScheduled]
+      properties:
+        sessions:
+          type: integer
+          format: int64
+          description: Expired sessions deleted.
+        guests:
+          type: integer
+          format: int64
+          description: Idle guest players deleted.
+        oauthStates:
+          type: integer
+          format: int64
+          description: Expired Lichess sign-in states deleted.
+        daysScheduled:
+          type: integer
+          description: Days from today (UTC) that have a scheduled puzzle.
+
     Health:
       type: object
       additionalProperties: false

@@ -35,7 +35,7 @@ func stateOf(ctx context.Context) *requestState {
 // POST /daily/{number}/start, register and login do.
 func (s *Server) withSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		st := &requestState{w: w, ip: clientIP(r, s.trustedProxies)}
+		st := &requestState{w: w, ip: clientIP(r, s.trustedProxies, s.clientIPHeader)}
 		if c, err := r.Cookie(oauthCookie); err == nil {
 			st.oauthState = c.Value
 		}

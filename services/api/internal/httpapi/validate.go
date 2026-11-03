@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,10 +12,15 @@ import (
 	nethttpmiddleware "github.com/oapi-codegen/nethttp-middleware"
 )
 
+// errUnauthorized is a failed cronSecret check.
+var errUnauthorized = errors.New("missing or wrong bearer token")
+
 // newRequestValidator checks every request against api/openapi.yaml (embedded at generation
 // time): unknown JSON fields, lengths, patterns, enums, parameter types. It runs on matched
-// routes only, so unknown paths and methods keep ServeMux's 404 and 405.
-func newRequestValidator() (func(http.Handler) http.Handler, error) {
+// routes only, so unknown paths and methods keep ServeMux's 404 and 405. The cronSecret scheme
+// (the cleanup endpoint) needs `Authorization: Bearer <cronSecret>`; an empty cronSecret
+// rejects every request to it.
+func newRequestValidator(cronSecret string) (func(http.Handler) http.Handler, error) {
 	spec, err := GetSwagger()
 	if err != nil {
 		return nil, fmt.Errorf("loading the embedded OpenAPI spec: %w", err)
@@ -25,8 +31,18 @@ func newRequestValidator() (func(http.Handler) http.Handler, error) {
 		Prefix:               "/api",
 		DoNotValidateServers: true,
 		Options: openapi3filter.Options{
-			// Sessions are checked by the handlers, not by the validator.
-			AuthenticationFunc: openapi3filter.NoopAuthenticationFunc,
+			// Sessions are checked by the handlers; the validator only checks the cron secret.
+			AuthenticationFunc: func(_ context.Context, in *openapi3filter.AuthenticationInput) error {
+				if in.SecuritySchemeName != "cronSecret" {
+					return nil
+				}
+				want := "Bearer " + cronSecret
+				got := in.RequestValidationInput.Request.Header.Get("Authorization")
+				if cronSecret == "" || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+					return errUnauthorized
+				}
+				return nil
+			},
 			// Report the first problem; it's enough to fix the request.
 			MultiError: false,
 		},
@@ -34,6 +50,10 @@ func newRequestValidator() (func(http.Handler) http.Handler, error) {
 			status := opts.StatusCode
 			if status == 0 {
 				status = http.StatusBadRequest
+			}
+			if status == http.StatusUnauthorized {
+				writeProblem(w, status, "This endpoint needs the right authorization.")
+				return
 			}
 			writeProblem(w, status, validationDetail(err))
 		},

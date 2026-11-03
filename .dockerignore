@@ -1,0 +1,17 @@
+# Only what the Dockerfile copies matters; keep everything else (and anything secret) out of
+# the build context.
+**/node_modules
+**/dist
+**/coverage
+**/test-results
+**/playwright-report
+**/*.tsbuildinfo
+.git
+.github
+.vscode
+.env
+.env.*
+services/api/bin
+services/api/internal/webui/dist
+apps/web/screenshots
+docs

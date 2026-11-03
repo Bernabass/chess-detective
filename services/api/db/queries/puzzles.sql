@@ -56,3 +56,7 @@ LEFT JOIN attempts a ON a.puzzle_id = p.id AND a.player_id = @player_id
 WHERE s.day <= @today
 ORDER BY s.day DESC
 LIMIT @page_size OFFSET @page_offset;
+
+-- name: CountScheduledFrom :one
+-- Days from $1 on that have a puzzle (the cleanup job warns when fewer than 30 remain).
+SELECT count(*) FROM daily_schedule WHERE day >= $1;
