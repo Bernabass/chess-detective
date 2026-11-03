@@ -51,6 +51,7 @@ const PAGES: [string, RegExp][] = [
   ['/login', /Sign in/],
   ['/register', /Create an account/],
   ['/about', /Thinking backwards/],
+  ['/privacy', /Privacy/],
   ['/lab', /The Lab/],
   ['/no/such/page', /This case file doesn't exist/],
 ];
@@ -61,6 +62,32 @@ describe('routes', () => {
     expect(await screen.findByRole('heading', { level: 1, name: heading })).toBeInTheDocument();
     expect(screen.getAllByRole('navigation', { name: 'Main' }).length).toBeGreaterThan(0);
     expect(await screen.findByText('Server: offline')).toBeInTheDocument();
+  });
+
+  it('the privacy page names what is stored, the cookies and every third party', async () => {
+    renderAt('/privacy');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Privacy' })).toBeInTheDocument();
+    const text = document.body.textContent;
+    for (const fact of [
+      'username and a hash of your password',
+      'Lichess user id and username',
+      'rg_session',
+      'rg_oauth',
+      'never writes IP addresses to its logs',
+      'no analytics',
+      'including IP addresses',
+    ]) {
+      expect(text).toContain(fact);
+    }
+    for (const [name, href] of [
+      ['privacy policy', 'https://vercel.com/legal/privacy-policy'],
+      ["Neon's privacy policy", 'https://neon.com/privacy-policy'],
+      ["Lichess's privacy policy", 'https://lichess.org/privacy'],
+      ['GitHub', 'https://github.com/Bernabass/chess-detective/issues'],
+    ] as const) {
+      expect(screen.getByRole('link', { name })).toHaveAttribute('href', href);
+    }
+    expect(screen.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '/privacy');
   });
 
   it('the Lab analyses the position in the link', async () => {

@@ -92,7 +92,7 @@ test.describe('Sign in with Lichess', () => {
     await expect(own).toBeVisible();
     await expect(header.getByRole('link', { name, exact: true })).toHaveCount(0);
 
-    // The owner is still themselves.
+    // The account holder is still themselves.
     await owner.reload();
     await expect(
       owner.getByRole('banner').first().getByRole('link', { name, exact: true }),

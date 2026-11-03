@@ -12,6 +12,7 @@ const ROUTES: [string, RegExp][] = [
   ['/login', /Sign in/],
   ['/register', /Create an account/],
   ['/about', /Thinking backwards/],
+  ['/privacy', /Privacy/],
   ['/lab', /The Lab/],
   ['/nowhere', /This case file doesn't exist/],
 ];

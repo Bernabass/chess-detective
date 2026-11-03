@@ -23,6 +23,7 @@ interface Scan {
 const PAGES: Scan[] = [
   { name: 'home', path: '/' },
   { name: 'about', path: '/about' },
+  { name: 'privacy', path: '/privacy' },
   { name: 'login', path: '/login' },
   { name: 'login after a failed Lichess sign-in', path: '/login?lichess=failed' },
   // The Lab with a full report showing (verdict, notes, last moves).

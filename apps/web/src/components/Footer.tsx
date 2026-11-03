@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router';
 import { fetchApiStatus, useApi } from '../lib/api';
 
 /** Site footer: license, source, and whether the game server is reachable. */
@@ -29,6 +30,13 @@ export function Footer() {
           >
             Source code
           </a>
+          {' · '}
+          <Link
+            to="/privacy"
+            className="text-ink underline decoration-card-edge underline-offset-4 hover:decoration-accent"
+          >
+            Privacy
+          </Link>
         </p>
         <p role="status" className="flex items-center gap-2">
           <span aria-hidden="true" className={`inline-block h-2 w-2 rounded-full ${dot}`} />
